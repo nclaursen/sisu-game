@@ -17,7 +17,7 @@ app.innerHTML = `
     <div id="startOverlay" class="start-overlay">
       <div class="start-card">
         <h2>Sisu: Guardian of the Garden</h2>
-        <p>Phase 2A Prototype</p>
+        <p>Phase 2D Prototype</p>
         <button id="startButton" type="button">Start</button>
       </div>
     </div>
@@ -26,6 +26,14 @@ app.innerHTML = `
         <h2>Game Over</h2>
         <p>Press R or tap restart.</p>
         <button id="restartButton" type="button">Restart</button>
+      </div>
+    </div>
+    <div id="levelCompleteOverlay" class="start-overlay hidden">
+      <div class="start-card">
+        <h2>Level Complete!</h2>
+        <p id="levelStats">Bones: 0 | Hearts: 0 | Time: 0.0s</p>
+        <button id="playAgainButton" type="button">Play Again</button>
+        <button id="nextLevelButton" type="button" disabled>Next Level (Soon)</button>
       </div>
     </div>
   </main>
@@ -42,10 +50,23 @@ const startOverlay = document.querySelector<HTMLDivElement>("#startOverlay");
 const startButton = document.querySelector<HTMLButtonElement>("#startButton");
 const gameOverOverlay = document.querySelector<HTMLDivElement>("#gameOverOverlay");
 const restartButton = document.querySelector<HTMLButtonElement>("#restartButton");
+const levelCompleteOverlay = document.querySelector<HTMLDivElement>("#levelCompleteOverlay");
+const levelStats = document.querySelector<HTMLParagraphElement>("#levelStats");
+const playAgainButton = document.querySelector<HTMLButtonElement>("#playAgainButton");
 const soundToggle = document.querySelector<HTMLButtonElement>("#soundToggle");
 const controlButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-control]"));
 
-if (!canvas || !startOverlay || !startButton || !gameOverOverlay || !restartButton || !soundToggle) {
+if (
+  !canvas ||
+  !startOverlay ||
+  !startButton ||
+  !gameOverOverlay ||
+  !restartButton ||
+  !levelCompleteOverlay ||
+  !levelStats ||
+  !playAgainButton ||
+  !soundToggle
+) {
   throw new Error("Missing required game UI elements");
 }
 
@@ -56,12 +77,17 @@ input.attachTouchButtons(controlButtons);
 const game = new Game(canvas, input, {
   onGameOver: () => {
     gameOverOverlay.classList.remove("hidden");
+  },
+  onLevelComplete: ({ bonesCollected, heartsRemaining, timeSec }) => {
+    levelStats.textContent = `Bones: ${bonesCollected} | Hearts: ${heartsRemaining} | Time: ${timeSec.toFixed(1)}s`;
+    levelCompleteOverlay.classList.remove("hidden");
   }
 });
 
 const restartGame = (): void => {
   game.restart();
   gameOverOverlay.classList.add("hidden");
+  levelCompleteOverlay.classList.add("hidden");
 };
 
 let soundOn = false;
@@ -77,9 +103,10 @@ startButton.addEventListener("click", () => {
 });
 
 restartButton.addEventListener("click", restartGame);
+playAgainButton.addEventListener("click", restartGame);
 
 window.addEventListener("keydown", (event) => {
-  if (event.code === "KeyR" && game.isGameOver()) {
+  if (event.code === "KeyR" && (game.isGameOver() || game.isLevelComplete())) {
     restartGame();
   }
 });

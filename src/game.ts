@@ -47,10 +47,24 @@ interface DirtDecorTriangle {
   flipX: boolean;
 }
 
+interface GoldenToy extends Rect {
+  collected: boolean;
+}
+
+interface ExitGate extends Rect {}
+
 type PlayerActionState = "normal" | "digging";
+type GameState = "playing" | "gameOver" | "levelComplete";
+
+interface LevelCompleteStats {
+  bonesCollected: number;
+  heartsRemaining: number;
+  timeSec: number;
+}
 
 interface GameCallbacks {
   onGameOver?: () => void;
+  onLevelComplete?: (stats: LevelCompleteStats) => void;
 }
 
 const INTERNAL_WIDTH = 320;
@@ -97,6 +111,8 @@ const DIG_PARTICLE_EMIT_INTERVAL_SEC = 0.075;
 const DIG_PARTICLE_GRAVITY = 600;
 const DIG_PARTICLE_MAX_COUNT = 30;
 
+const GATE_LOCKED_HINT_SEC = 1.5;
+
 const PLAYER_START_X = 16;
 const PLAYER_START_Y = 40;
 
@@ -108,12 +124,15 @@ const LEVEL_PLATFORMS: Rect[] = [
 ];
 
 const ENEMY_SPAWN = { x: 78, y: 116 };
+const TOY_SPAWN: GoldenToy = { x: 186, y: 88, w: 8, h: 8, collected: false };
+const EXIT_GATE: ExitGate = { x: 292, y: 132, w: 18, h: 32 };
 
 export class Game {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly input: Input;
   private readonly onGameOver?: () => void;
+  private readonly onLevelComplete?: (stats: LevelCompleteStats) => void;
   private readonly enemy: Enemy;
 
   private lastTick = 0;
@@ -126,7 +145,8 @@ export class Game {
   private hearts = MAX_HEARTS;
   private bonesCollected = 0;
   private invincibleTimerSec = 0;
-  private gameOver = false;
+  private gameState: GameState = "playing";
+  private elapsedSec = 0;
 
   private playerState: PlayerActionState = "normal";
   private digTimerSec = 0;
@@ -135,6 +155,10 @@ export class Game {
   private bones: BoneCollectible[] = [];
   private digParticles: DigParticle[] = [];
   private digEmitTimerSec = 0;
+
+  private goldenToy: GoldenToy = { ...TOY_SPAWN };
+  private hasGoldenToy = false;
+  private gateHintTimerSec = 0;
 
   private readonly player: Player = {
     x: PLAYER_START_X,
@@ -158,6 +182,7 @@ export class Game {
     this.ctx = context;
     this.input = input;
     this.onGameOver = callbacks.onGameOver;
+    this.onLevelComplete = callbacks.onLevelComplete;
     this.enemy = new Enemy(ENEMY_SPAWN);
     this.digSpots = this.generateDigSpots("level1");
 
@@ -186,10 +211,11 @@ export class Game {
     this.hearts = MAX_HEARTS;
     this.bonesCollected = 0;
     this.invincibleTimerSec = 0;
-    this.gameOver = false;
+    this.gameState = "playing";
     this.lastGroundedTimeMs = -Infinity;
     this.lastJumpPressedTimeMs = -Infinity;
     this.previousJumpHeld = false;
+    this.elapsedSec = 0;
 
     this.playerState = "normal";
     this.digTimerSec = 0;
@@ -208,10 +234,18 @@ export class Game {
     this.digSpots = this.generateDigSpots("level1");
     this.bones = [];
     this.digParticles = [];
+
+    this.goldenToy = { ...TOY_SPAWN, collected: false };
+    this.hasGoldenToy = false;
+    this.gateHintTimerSec = 0;
   }
 
   isGameOver(): boolean {
-    return this.gameOver;
+    return this.gameState === "gameOver";
+  }
+
+  isLevelComplete(): boolean {
+    return this.gameState === "levelComplete";
   }
 
   private loop(timestamp: number): void {
@@ -231,16 +265,21 @@ export class Game {
   }
 
   private update(delta: number): void {
-    if (this.gameOver) {
+    if (this.gameState !== "playing") {
       return;
     }
 
     const state = this.input.state;
     const inputDirection = Number(state.right) - Number(state.left);
     const previousPlayerBottom = this.player.y + this.player.h;
+    this.elapsedSec += delta;
 
     if (this.invincibleTimerSec > 0) {
       this.invincibleTimerSec = Math.max(0, this.invincibleTimerSec - delta);
+    }
+
+    if (this.gateHintTimerSec > 0) {
+      this.gateHintTimerSec = Math.max(0, this.gateHintTimerSec - delta);
     }
 
     if (this.playerState === "normal" && this.input.consumeDigPressed()) {
@@ -312,7 +351,8 @@ export class Game {
 
     this.enemy.update(delta, LEVEL_PLATFORMS, GRAVITY, TERMINAL_VELOCITY, COLLISION_SKIN);
     this.handlePlayerEnemyCollision(previousPlayerBottom);
-    this.updateBones(delta);
+    this.updateBonesAndParticles(delta);
+    this.handleGoldenToyAndGate();
 
     this.player.animationTime += delta;
     this.previousJumpHeld = state.jumpHeld;
@@ -418,12 +458,35 @@ export class Game {
     this.player.grounded = false;
 
     if (this.hearts <= 0) {
-      this.gameOver = true;
+      this.gameState = "gameOver";
       this.onGameOver?.();
     }
   }
 
-  private updateBones(delta: number): void {
+  private handleGoldenToyAndGate(): void {
+    if (!this.goldenToy.collected && intersectsWithSkin(this.player, this.goldenToy, 0)) {
+      this.goldenToy.collected = true;
+      this.hasGoldenToy = true;
+    }
+
+    if (!intersectsWithSkin(this.player, EXIT_GATE, 0)) {
+      return;
+    }
+
+    if (!this.hasGoldenToy) {
+      this.gateHintTimerSec = Math.max(this.gateHintTimerSec, GATE_LOCKED_HINT_SEC);
+      return;
+    }
+
+    this.gameState = "levelComplete";
+    this.onLevelComplete?.({
+      bonesCollected: this.bonesCollected,
+      heartsRemaining: this.hearts,
+      timeSec: this.elapsedSec
+    });
+  }
+
+  private updateBonesAndParticles(delta: number): void {
     for (const bone of this.bones) {
       if (!bone.active) {
         continue;
@@ -649,15 +712,57 @@ export class Game {
       this.ctx.fillRect(platform.x, platform.y, platform.w, platform.h);
     }
 
+    this.drawExitGate();
+    this.drawGoldenToy();
     this.drawDigSpots();
     this.drawBones();
     this.drawDigParticles();
     this.enemy.draw(this.ctx);
     this.drawPlayer();
     this.drawHud();
+    if (this.gateHintTimerSec > 0) {
+      this.drawGateHint();
+    }
     if (this.debugEnabled) {
       this.drawDebug();
     }
+  }
+
+  private drawExitGate(): void {
+    const unlocked = this.hasGoldenToy;
+    const pulse = 0.75 + Math.sin(this.nowMs * 0.01) * 0.25;
+
+    this.ctx.fillStyle = unlocked ? `rgba(76, 178, 89, ${pulse.toFixed(3)})` : "#6d5f67";
+    this.ctx.fillRect(EXIT_GATE.x, EXIT_GATE.y, EXIT_GATE.w, EXIT_GATE.h);
+
+    this.ctx.fillStyle = unlocked ? "#c8f3ce" : "#a99ca4";
+    const bars = 3;
+    for (let i = 0; i < bars; i += 1) {
+      const x = EXIT_GATE.x + 3 + i * 4;
+      this.ctx.fillRect(x, EXIT_GATE.y + 3, 2, EXIT_GATE.h - 6);
+    }
+
+    this.ctx.strokeStyle = "#283040";
+    this.ctx.strokeRect(EXIT_GATE.x, EXIT_GATE.y, EXIT_GATE.w, EXIT_GATE.h);
+  }
+
+  private drawGoldenToy(): void {
+    if (this.goldenToy.collected) {
+      return;
+    }
+
+    const pulseScale = 1 + Math.sin(this.nowMs * 0.012) * 0.1;
+    const drawW = this.goldenToy.w * pulseScale;
+    const drawH = this.goldenToy.h * pulseScale;
+    const drawX = this.goldenToy.x - (drawW - this.goldenToy.w) / 2;
+    const drawY = this.goldenToy.y - (drawH - this.goldenToy.h) / 2;
+
+    this.ctx.fillStyle = "#f5cb42";
+    this.ctx.fillRect(drawX, drawY, drawW, drawH);
+    this.ctx.fillStyle = "#fff2b8";
+    this.ctx.fillRect(drawX + 2, drawY + 2, Math.max(1, drawW - 4), Math.max(1, drawH - 4));
+    this.ctx.strokeStyle = "#a87f18";
+    this.ctx.strokeRect(drawX, drawY, drawW, drawH);
   }
 
   private drawDigSpots(): void {
@@ -685,6 +790,24 @@ export class Game {
     }
   }
 
+  private drawDugSpotDecor(spot: DigSpot): void {
+    const shades = ["#7f6948", "#6f5b3f", "#8d7450"];
+    for (const tri of spot.dirtDecor) {
+      const x = spot.x + tri.xOffset;
+      const y = spot.y + tri.yOffset;
+      const size = tri.size;
+      const dir = tri.flipX ? -1 : 1;
+
+      this.ctx.fillStyle = shades[tri.shadeIndex % shades.length];
+      this.ctx.beginPath();
+      this.ctx.moveTo(x, y);
+      this.ctx.lineTo(x + dir * size, y + 1);
+      this.ctx.lineTo(x, y + size);
+      this.ctx.closePath();
+      this.ctx.fill();
+    }
+  }
+
   private drawBones(): void {
     for (const bone of this.bones) {
       if (!bone.active) {
@@ -703,24 +826,6 @@ export class Game {
       const alpha = clamp(particle.lifeSec / particle.maxLifeSec, 0, 1);
       this.ctx.fillStyle = `rgba(120, 78, 42, ${alpha.toFixed(3)})`;
       this.ctx.fillRect(particle.x, particle.y, particle.w, particle.h);
-    }
-  }
-
-  private drawDugSpotDecor(spot: DigSpot): void {
-    const shades = ["#7f6948", "#6f5b3f", "#8d7450"];
-    for (const tri of spot.dirtDecor) {
-      const x = spot.x + tri.xOffset;
-      const y = spot.y + tri.yOffset;
-      const size = tri.size;
-      const dir = tri.flipX ? -1 : 1;
-
-      this.ctx.fillStyle = shades[tri.shadeIndex % shades.length];
-      this.ctx.beginPath();
-      this.ctx.moveTo(x, y);
-      this.ctx.lineTo(x + dir * size, y + 1);
-      this.ctx.lineTo(x, y + size);
-      this.ctx.closePath();
-      this.ctx.fill();
     }
   }
 
@@ -747,8 +852,8 @@ export class Game {
   }
 
   private drawHud(): void {
-    this.ctx.fillStyle = "rgba(12, 24, 40, 0.7)";
-    this.ctx.fillRect(6, 6, 174, 32);
+    this.ctx.fillStyle = "rgba(12, 24, 40, 0.72)";
+    this.ctx.fillRect(6, 6, 174, 46);
 
     this.ctx.font = "10px monospace";
     this.ctx.fillStyle = "#f7f3c5";
@@ -765,20 +870,30 @@ export class Game {
 
     this.ctx.fillStyle = "#f7f3c5";
     this.ctx.fillText(`Bones: ${this.bonesCollected}`, 11, 31);
+    this.ctx.fillText(`Toy: ${this.hasGoldenToy ? "1/1" : "0/1"}`, 11, 44);
+  }
+
+  private drawGateHint(): void {
+    this.ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+    this.ctx.fillRect(96, 8, 128, 18);
+    this.ctx.fillStyle = "#f9e7b8";
+    this.ctx.font = "9px monospace";
+    this.ctx.fillText("Find the Golden Toy", 105, 20);
   }
 
   private drawDebug(): void {
     const coyoteRemaining = Math.max(0, COYOTE_TIME_MS - (this.nowMs - this.lastGroundedTimeMs));
     const jumpBufferRemaining = Math.max(0, JUMP_BUFFER_MS - (this.nowMs - this.lastJumpPressedTimeMs));
     this.ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
-    this.ctx.fillRect(6, 28, 196, 76);
+    this.ctx.fillRect(6, 56, 206, 86);
     this.ctx.fillStyle = "#d7f3ff";
     this.ctx.font = "9px monospace";
-    this.ctx.fillText(`G:${this.player.grounded ? 1 : 0} H:${this.hearts} B:${this.bonesCollected}`, 10, 40);
-    this.ctx.fillText(`State:${this.playerState} DigT:${Math.max(0, this.digTimerSec).toFixed(2)}`, 10, 52);
-    this.ctx.fillText(`VX:${this.player.vx.toFixed(1)} VY:${this.player.vy.toFixed(1)}`, 10, 64);
-    this.ctx.fillText(`Coyote:${coyoteRemaining.toFixed(0)}ms`, 10, 76);
-    this.ctx.fillText(`Buffer:${jumpBufferRemaining.toFixed(0)}ms`, 10, 88);
+    this.ctx.fillText(`GS:${this.gameState} G:${this.player.grounded ? 1 : 0} H:${this.hearts} B:${this.bonesCollected}`, 10, 68);
+    this.ctx.fillText(`Toy:${this.hasGoldenToy ? 1 : 0} GateHint:${this.gateHintTimerSec.toFixed(2)}`, 10, 80);
+    this.ctx.fillText(`State:${this.playerState} DigT:${Math.max(0, this.digTimerSec).toFixed(2)}`, 10, 92);
+    this.ctx.fillText(`VX:${this.player.vx.toFixed(1)} VY:${this.player.vy.toFixed(1)}`, 10, 104);
+    this.ctx.fillText(`Coyote:${coyoteRemaining.toFixed(0)}ms`, 10, 116);
+    this.ctx.fillText(`Buffer:${jumpBufferRemaining.toFixed(0)}ms`, 10, 128);
   }
 
   private checkGrounded(): boolean {

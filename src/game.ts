@@ -23,8 +23,19 @@ interface DigSpot extends Rect {
 
 interface BoneCollectible extends Rect {
   active: boolean;
+  vy: number;
+  state: "popping" | "idle";
+  popTimerSec: number;
+  startY: number;
   targetY: number;
-  popSpeed: number;
+  settleY: number;
+}
+
+interface DigParticle extends Rect {
+  vx: number;
+  vy: number;
+  lifeSec: number;
+  maxLifeSec: number;
 }
 
 type PlayerActionState = "normal" | "digging";
@@ -64,6 +75,13 @@ const DIG_START_MIN_X_FACTOR = 0.1;
 const DIG_MIN_DISTANCE_FROM_START = 28;
 const DIG_MIN_DISTANCE_FROM_ENEMY = 34;
 const DIG_MIN_SPOT_SPACING = 28;
+const DIG_BONE_CHANCE = 0.7;
+
+const BONE_POP_DURATION_SEC = 0.3;
+const BONE_POP_INITIAL_VY = -120;
+const BONE_POP_GRAVITY = 520;
+const BONE_SETTLE_RANGE = 2.5;
+const DIG_PARTICLE_LIFE_SEC = 0.45;
 
 const PLAYER_START_X = 16;
 const PLAYER_START_Y = 40;
@@ -101,6 +119,7 @@ export class Game {
   private activeDigSpotIndex: number | null = null;
   private digSpots: DigSpot[] = [];
   private bones: BoneCollectible[] = [];
+  private digParticles: DigParticle[] = [];
 
   private readonly player: Player = {
     x: PLAYER_START_X,
@@ -172,6 +191,7 @@ export class Game {
     this.enemy.reset();
     this.digSpots = this.generateDigSpots("level1");
     this.bones = [];
+    this.digParticles = [];
   }
 
   isGameOver(): boolean {
@@ -392,14 +412,42 @@ export class Game {
         continue;
       }
 
-      if (bone.y > bone.targetY) {
-        bone.y = Math.max(bone.targetY, bone.y - bone.popSpeed * delta);
+      if (bone.state === "popping") {
+        bone.popTimerSec += delta;
+        bone.vy += BONE_POP_GRAVITY * delta;
+        bone.y += bone.vy * delta;
+
+        if (bone.popTimerSec < BONE_POP_DURATION_SEC * 0.75) {
+          bone.y = Math.max(bone.targetY, bone.y);
+        } else {
+          bone.y = Math.min(bone.settleY, Math.max(bone.targetY, bone.y));
+        }
+
+        if (bone.popTimerSec >= BONE_POP_DURATION_SEC) {
+          bone.state = "idle";
+          bone.y = bone.settleY;
+          bone.vy = 0;
+        }
       }
 
-      if (intersectsWithSkin(this.player, bone, 0)) {
+      if (bone.state === "idle" && intersectsWithSkin(this.player, bone, 0)) {
         bone.active = false;
         this.bonesCollected += 1;
       }
+    }
+
+    for (let i = this.digParticles.length - 1; i >= 0; i -= 1) {
+      const particle = this.digParticles[i];
+      particle.lifeSec -= delta;
+
+      if (particle.lifeSec <= 0) {
+        this.digParticles.splice(i, 1);
+        continue;
+      }
+
+      particle.x += particle.vx * delta;
+      particle.y += particle.vy * delta;
+      particle.vy += 280 * delta;
     }
   }
 
@@ -420,23 +468,52 @@ export class Game {
     spot.dug = true;
     if (spot.hasBone) {
       this.spawnBoneFromSpot(spot);
+    } else {
+      this.spawnEmptyDigPuff(spot);
     }
   }
 
   private spawnBoneFromSpot(spot: DigSpot): void {
     const boneWidth = 8;
     const boneHeight = 6;
-    const targetY = spot.y - boneHeight - 2;
+    const groundY = spot.y + spot.h;
+    const startY = groundY - 4;
+    const targetY = groundY - 12;
+    const settleY = targetY + BONE_SETTLE_RANGE;
 
     this.bones.push({
       x: spot.x + (spot.w - boneWidth) / 2,
-      y: targetY + 8,
+      y: startY,
       w: boneWidth,
       h: boneHeight,
       active: true,
+      vy: BONE_POP_INITIAL_VY,
+      state: "popping",
+      popTimerSec: 0,
+      startY,
       targetY,
-      popSpeed: 32
+      settleY
     });
+  }
+
+  private spawnEmptyDigPuff(spot: DigSpot): void {
+    const centerX = spot.x + spot.w / 2;
+    const centerY = spot.y + 1;
+    const particleCount = 3 + Math.floor((spot.x + spot.y) % 4);
+
+    for (let i = 0; i < particleCount; i += 1) {
+      const spread = i - (particleCount - 1) / 2;
+      this.digParticles.push({
+        x: centerX + spread * 2,
+        y: centerY,
+        w: 3,
+        h: 3,
+        vx: spread * 16,
+        vy: -45 - Math.abs(spread) * 5,
+        lifeSec: DIG_PARTICLE_LIFE_SEC,
+        maxLifeSec: DIG_PARTICLE_LIFE_SEC
+      });
+    }
   }
 
   private findDigSpotForPlayer(): number | null {
@@ -491,7 +568,7 @@ export class Game {
         w: DIG_SPOT_WIDTH,
         h: DIG_SPOT_HEIGHT,
         dug: false,
-        hasBone: rng() > 0.35
+        hasBone: rng() < DIG_BONE_CHANCE
       };
 
       if (!isValidDigSpot(candidate, LEVEL_PLATFORMS)) {
@@ -518,6 +595,7 @@ export class Game {
 
     this.drawDigSpots();
     this.drawBones();
+    this.drawDigParticles();
     this.enemy.draw(this.ctx);
     this.drawPlayer();
     this.drawHud();
@@ -556,11 +634,18 @@ export class Game {
         continue;
       }
 
-      this.ctx.fillStyle = "#f1e7ce";
-      this.ctx.fillRect(bone.x, bone.y + 2, bone.w, 2);
-      this.ctx.fillRect(bone.x + 1, bone.y, bone.w - 2, bone.h);
-      this.ctx.fillStyle = "#b7ab8a";
-      this.ctx.fillRect(bone.x + 2, bone.y + 2, bone.w - 4, 2);
+      this.ctx.fillStyle = "#ffffff";
+      this.ctx.fillRect(bone.x, bone.y, bone.w, bone.h);
+      this.ctx.strokeStyle = "#d8d8d8";
+      this.ctx.strokeRect(bone.x, bone.y, bone.w, bone.h);
+    }
+  }
+
+  private drawDigParticles(): void {
+    for (const particle of this.digParticles) {
+      const alpha = clamp(particle.lifeSec / particle.maxLifeSec, 0, 1);
+      this.ctx.fillStyle = `rgba(120, 78, 42, ${alpha.toFixed(3)})`;
+      this.ctx.fillRect(particle.x, particle.y, particle.w, particle.h);
     }
   }
 
@@ -588,7 +673,7 @@ export class Game {
 
   private drawHud(): void {
     this.ctx.fillStyle = "rgba(12, 24, 40, 0.7)";
-    this.ctx.fillRect(6, 6, 174, 18);
+    this.ctx.fillRect(6, 6, 174, 32);
 
     this.ctx.font = "10px monospace";
     this.ctx.fillStyle = "#f7f3c5";
@@ -604,7 +689,7 @@ export class Game {
     }
 
     this.ctx.fillStyle = "#f7f3c5";
-    this.ctx.fillText(`Bones: ${this.bonesCollected}`, 84, 18);
+    this.ctx.fillText(`Bones: ${this.bonesCollected}`, 11, 31);
   }
 
   private drawDebug(): void {

@@ -70,6 +70,47 @@ interface SpawnPoint {
   groundY: number;
 }
 
+type DecorationKind = "grass" | "flower" | "bush" | "rock" | "fencePost" | "weed" | "mushroom" | "vine";
+type DecorationDepth = "far" | "mid" | "near";
+type BackgroundLayerKind = "gradient" | "clouds" | "treeLine" | "hills" | "fenceLine";
+
+interface Decoration {
+  kind: DecorationKind;
+  x: number;
+  y: number;
+  variant?: number;
+  depth?: DecorationDepth;
+}
+
+interface BackgroundLayer {
+  kind: BackgroundLayerKind;
+  parallax: number;
+  seed?: number;
+  y?: number;
+}
+
+interface BackgroundStamp {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  variant: number;
+}
+
+interface PreparedBackgroundLayer extends BackgroundLayer {
+  stamps: BackgroundStamp[];
+}
+
+interface AmbientPollenParticle {
+  x: number;
+  y: number;
+  vx: number;
+  phase: number;
+  amp: number;
+  speed: number;
+  size: number;
+}
+
 interface LevelDefinition {
   id: string;
   name: string;
@@ -81,6 +122,8 @@ interface LevelDefinition {
   goldenToyPosition: { x: number; y: number };
   exitGatePosition: { x: number; y: number };
   digSeed: string;
+  decorations?: Decoration[];
+  backgroundLayers?: BackgroundLayer[];
 }
 
 type PlayerActionState = "normal" | "digging";
@@ -147,6 +190,8 @@ const DIG_PARTICLE_MAX_COUNT = 30;
 const ENEMY_SPAWN_POOF_MIN_PARTICLES = 8;
 const ENEMY_SPAWN_POOF_MAX_PARTICLES = 12;
 const ENEMY_SPAWN_POOF_COLOR = "170, 142, 104";
+const AMBIENT_POLLEN_MAX = 16;
+const AMBIENT_POLLEN_BASELINE_Y = 112;
 
 const GATE_LOCKED_HINT_SEC = 1.5;
 
@@ -207,7 +252,43 @@ const LEVEL_WILD_GARDEN: LevelDefinition = {
   ],
   goldenToyPosition: { x: 1452, y: 76 },
   exitGatePosition: { x: 1682, y: 132 },
-  digSeed: "wild-garden-seed"
+  digSeed: "wild-garden-seed",
+  backgroundLayers: [
+    { kind: "gradient", parallax: 0 },
+    { kind: "treeLine", parallax: 0.2, seed: 11, y: 146 },
+    { kind: "hills", parallax: 0.35, seed: 23, y: 157 },
+    { kind: "fenceLine", parallax: 0.5, seed: 37, y: 160 }
+  ],
+  decorations: [
+    { kind: "grass", x: 110, y: 164, variant: 0, depth: "mid" },
+    { kind: "flower", x: 132, y: 164, variant: 0, depth: "mid" },
+    { kind: "weed", x: 188, y: 164, variant: 1, depth: "mid" },
+    { kind: "rock", x: 256, y: 164, variant: 0, depth: "mid" },
+
+    { kind: "grass", x: 420, y: 164, variant: 1, depth: "mid" },
+    { kind: "flower", x: 466, y: 164, variant: 1, depth: "mid" },
+    { kind: "bush", x: 532, y: 164, variant: 0, depth: "far" },
+    { kind: "mushroom", x: 604, y: 164, variant: 0, depth: "mid" },
+    { kind: "weed", x: 696, y: 164, variant: 0, depth: "mid" },
+
+    { kind: "grass", x: 816, y: 164, variant: 1, depth: "mid" },
+    { kind: "flower", x: 878, y: 164, variant: 2, depth: "mid" },
+    { kind: "rock", x: 948, y: 164, variant: 1, depth: "mid" },
+    { kind: "bush", x: 1020, y: 164, variant: 1, depth: "far" },
+    { kind: "weed", x: 1118, y: 164, variant: 0, depth: "mid" },
+
+    { kind: "grass", x: 1248, y: 164, variant: 2, depth: "mid" },
+    { kind: "flower", x: 1302, y: 164, variant: 0, depth: "mid" },
+    { kind: "vine", x: 1368, y: 108, variant: 0, depth: "near" },
+    { kind: "vine", x: 1488, y: 90, variant: 1, depth: "near" },
+    { kind: "bush", x: 1528, y: 164, variant: 0, depth: "far" },
+
+    { kind: "fencePost", x: 1608, y: 164, variant: 0, depth: "near" },
+    { kind: "fencePost", x: 1638, y: 164, variant: 1, depth: "near" },
+    { kind: "flower", x: 1670, y: 164, variant: 1, depth: "mid" },
+    { kind: "grass", x: 1724, y: 164, variant: 1, depth: "mid" },
+    { kind: "rock", x: 1760, y: 164, variant: 0, depth: "mid" }
+  ]
 };
 
 const LEVEL_COURTYARD: LevelDefinition = {
@@ -328,6 +409,10 @@ export class Game {
   private levelIndex = 0;
   private levelTitleTimerSec = 0;
   private camera = { x: 0, y: 0 };
+  private activeDecorations: Decoration[] = [];
+  private preparedBackgroundLayers: PreparedBackgroundLayer[] = [];
+  private ambientPollen: AmbientPollenParticle[] = [];
+  private skyGradient: CanvasGradient | null = null;
 
   private playerState: PlayerActionState = "normal";
   private digTimerSec = 0;
@@ -463,6 +548,7 @@ export class Game {
 
     this.resetEnemyWave();
     this.digSpots = this.generateDigSpots(this.currentLevel().digSeed);
+    this.preparedBackgroundLayers = this.prepareBackgroundLayers(this.currentLevel());
     this.bones = [];
     this.digParticles = [];
 
@@ -482,6 +568,11 @@ export class Game {
     this.hasGoldenToy = false;
     this.gateHintTimerSec = 0;
     this.levelTitleTimerSec = 1.5;
+    this.activeDecorations = this.prepareDecorations(this.currentLevel());
+    this.ambientPollen = this.createAmbientPollen(this.currentLevel());
+    this.skyGradient = this.ctx.createLinearGradient(0, 0, 0, INTERNAL_HEIGHT);
+    this.skyGradient.addColorStop(0, "#9ad8ff");
+    this.skyGradient.addColorStop(1, this.currentLevel().backgroundColor);
     this.camera.x = 0;
     this.camera.y = 0;
   }
@@ -607,6 +698,7 @@ export class Game {
     this.handlePlayerEnemyCollision(previousPlayerBottom);
     this.updateBonesAndParticles(delta);
     this.handleGoldenToyAndGate();
+    this.updateAmbientPollen(delta);
     this.updateCamera();
     this.updatePlayerAnimation(delta);
 
@@ -1116,26 +1208,27 @@ export class Game {
     this.ctx.imageSmoothingEnabled = false;
     this.ctx.clearRect(0, 0, INTERNAL_WIDTH, INTERNAL_HEIGHT);
 
-    this.ctx.fillStyle = this.currentLevel().backgroundColor;
-    this.ctx.fillRect(0, 0, INTERNAL_WIDTH, INTERNAL_HEIGHT);
+    this.drawBackgroundLayers();
 
     this.ctx.save();
     this.ctx.translate(-this.camera.x, -this.camera.y);
 
-    this.ctx.fillStyle = "#669f5d";
-    for (const platform of this.currentLevel().platforms) {
-      this.ctx.fillRect(platform.x, platform.y, platform.w, platform.h);
-    }
+    this.drawPlatforms();
+
+    this.drawDecorations("far");
+    this.drawDecorations("mid");
 
     this.drawExitGate();
     this.drawGoldenToy();
     this.drawDigSpots();
     this.drawBones();
-    this.drawDigParticles();
     for (const enemy of this.enemies) {
       enemy.draw(this.ctx);
     }
     this.drawPlayer();
+    this.drawDecorations("near");
+    this.drawDigParticles();
+    this.drawAmbientPollen();
     this.ctx.restore();
 
     this.drawHud();
@@ -1192,15 +1285,15 @@ export class Game {
       const spot = this.digSpots[i];
       const isActiveDigSpot = this.activeDigSpotIndex === i && this.playerState === "digging";
 
-      this.ctx.fillStyle = spot.dug ? "#8b7657" : "#56724a";
+      this.ctx.fillStyle = spot.dug ? "#8c6a49" : "#7a5433";
       this.ctx.fillRect(spot.x, spot.y, spot.w, spot.h);
 
       if (!spot.dug) {
-        this.ctx.fillStyle = isActiveDigSpot ? "#d7c086" : "#8ca574";
+        this.ctx.fillStyle = isActiveDigSpot ? "#f1c27d" : "#b07a4a";
         this.ctx.fillRect(spot.x + 2, spot.y + 1, 2, 2);
         this.ctx.fillRect(spot.x + spot.w - 4, spot.y + 1, 2, 2);
       } else {
-        this.ctx.fillStyle = "#3f3c34";
+        this.ctx.fillStyle = "#4c3826";
         this.ctx.fillRect(spot.x + 2, spot.y + 2, spot.w - 4, 2);
         this.drawDugSpotDecor(spot);
       }
@@ -1213,7 +1306,7 @@ export class Game {
   }
 
   private drawDugSpotDecor(spot: DigSpot): void {
-    const shades = ["#7f6948", "#6f5b3f", "#8d7450"];
+    const shades = ["#875f3c", "#6f4a2d", "#9b7048"];
     for (const tri of spot.dirtDecor) {
       const x = spot.x + tri.xOffset;
       const y = spot.y + tri.yOffset;
@@ -1227,6 +1320,37 @@ export class Game {
       this.ctx.lineTo(x, y + size);
       this.ctx.closePath();
       this.ctx.fill();
+    }
+  }
+
+  private drawPlatforms(): void {
+    for (const platform of this.currentLevel().platforms) {
+      const x = Math.round(platform.x);
+      const y = Math.round(platform.y);
+      const w = Math.round(platform.w);
+      const h = Math.round(platform.h);
+
+      // Base stone block.
+      this.ctx.fillStyle = "#7e848c";
+      this.ctx.fillRect(x, y, w, h);
+
+      // Top highlight strip for readability.
+      this.ctx.fillStyle = "#9aa1a8";
+      this.ctx.fillRect(x, y, w, 2);
+
+      // Bottom shadow strip for depth.
+      this.ctx.fillStyle = "#5e646c";
+      this.ctx.fillRect(x, y + h - 2, w, 2);
+
+      // Simple stone flecks.
+      this.ctx.fillStyle = "#6b7178";
+      for (let px = x + 4; px < x + w - 3; px += 10) {
+        this.ctx.fillRect(px, y + 4, 2, 1);
+      }
+      this.ctx.fillStyle = "#aab1b8";
+      for (let px = x + 8; px < x + w - 2; px += 12) {
+        this.ctx.fillRect(px, y + 7, 1, 1);
+      }
     }
   }
 
@@ -1248,6 +1372,84 @@ export class Game {
       const alpha = clamp(particle.lifeSec / particle.maxLifeSec, 0, 1);
       this.ctx.fillStyle = `rgba(${particle.colorRgb}, ${alpha.toFixed(3)})`;
       this.ctx.fillRect(particle.x, particle.y, particle.w, particle.h);
+    }
+  }
+
+  private drawBackgroundLayers(): void {
+    this.ctx.fillStyle = this.currentLevel().backgroundColor;
+    this.ctx.fillRect(0, 0, INTERNAL_WIDTH, INTERNAL_HEIGHT);
+
+    for (const layer of this.preparedBackgroundLayers) {
+      if (layer.kind === "gradient") {
+        this.ctx.fillStyle = this.skyGradient ?? this.currentLevel().backgroundColor;
+        this.ctx.fillRect(0, 0, INTERNAL_WIDTH, INTERNAL_HEIGHT);
+        continue;
+      }
+
+      for (const stamp of layer.stamps) {
+        const screenX = Math.round(stamp.x - this.camera.x * layer.parallax);
+        const screenY = Math.round(stamp.y);
+        if (screenX + stamp.w < -8 || screenX > INTERNAL_WIDTH + 8) {
+          continue;
+        }
+
+        if (layer.kind === "treeLine") {
+          this.ctx.fillStyle = "#4e6f56";
+          this.ctx.fillRect(screenX, screenY - stamp.h, stamp.w, stamp.h);
+          this.ctx.fillStyle = "#3f5f49";
+          this.ctx.fillRect(screenX + 2, screenY - stamp.h + 3, Math.max(2, stamp.w - 4), Math.max(2, stamp.h - 6));
+        } else if (layer.kind === "hills") {
+          this.ctx.fillStyle = stamp.variant % 2 === 0 ? "#7ca582" : "#739a79";
+          for (let i = 0; i < stamp.h; i += 2) {
+            const rowW = Math.max(4, stamp.w - i * 2);
+            const rowX = screenX + ((stamp.w - rowW) >> 1);
+            this.ctx.fillRect(rowX, screenY - stamp.h + i, rowW, 2);
+          }
+        } else if (layer.kind === "fenceLine") {
+          this.ctx.fillStyle = "#7a6546";
+          this.ctx.fillRect(screenX, screenY - stamp.h, 2, stamp.h);
+          this.ctx.fillRect(screenX - 1, screenY - stamp.h + 4, 5, 1);
+        } else if (layer.kind === "clouds") {
+          this.ctx.fillStyle = "rgba(245, 250, 255, 0.85)";
+          this.ctx.fillRect(screenX, screenY, stamp.w, stamp.h);
+          this.ctx.fillRect(screenX + 2, screenY - 2, Math.max(2, stamp.w - 4), stamp.h);
+        }
+      }
+    }
+  }
+
+  private drawDecorations(depth: DecorationDepth): void {
+    for (const decoration of this.activeDecorations) {
+      const itemDepth = decoration.depth ?? "mid";
+      if (itemDepth !== depth) {
+        continue;
+      }
+
+      const sprite = getDecorationSprite(decoration.kind, decoration.variant ?? 0);
+      const parallax = getDecorationParallax(itemDepth);
+      const worldDrawX = decoration.x + this.camera.x * (1 - parallax);
+      const drawX = Math.round(worldDrawX);
+      const drawY = Math.round(decoration.y - sprite.h);
+      this.ctx.drawImage(sprite.image, drawX, drawY);
+    }
+  }
+
+  private drawAmbientPollen(): void {
+    this.ctx.fillStyle = "rgba(246, 237, 179, 0.72)";
+    for (const p of this.ambientPollen) {
+      const x = Math.round(p.x);
+      const y = Math.round(p.y + Math.sin(this.elapsedSec * p.speed + p.phase) * p.amp);
+      this.ctx.fillRect(x, y, p.size, p.size);
+    }
+  }
+
+  private updateAmbientPollen(delta: number): void {
+    const worldWidth = this.currentLevel().width;
+    for (const p of this.ambientPollen) {
+      p.x += p.vx * delta;
+      if (p.x < -12) {
+        p.x += worldWidth + 24;
+      }
     }
   }
 
@@ -1388,8 +1590,113 @@ export class Game {
   private updateCamera(): void {
     const maxCameraX = Math.max(0, this.currentLevel().width - INTERNAL_WIDTH);
     const desiredX = this.player.x - CAMERA_PLAYER_SCREEN_X;
-    this.camera.x = clamp(desiredX, 0, maxCameraX);
+    this.camera.x = Math.round(clamp(desiredX, 0, maxCameraX));
     this.camera.y = 0;
+  }
+
+  private prepareBackgroundLayers(level: LevelDefinition): PreparedBackgroundLayer[] {
+    if (!level.backgroundLayers || level.backgroundLayers.length === 0) {
+      return [];
+    }
+
+    const prepared: PreparedBackgroundLayer[] = [];
+    for (const layer of level.backgroundLayers) {
+      const rng = createSeededRng(`${level.id}:${layer.kind}:${layer.seed ?? 0}`);
+      const stamps: BackgroundStamp[] = [];
+
+      if (layer.kind === "treeLine") {
+        let x = -80;
+        while (x < level.width + 140) {
+          const w = 22 + Math.floor(rng() * 26);
+          const h = 12 + Math.floor(rng() * 14);
+          stamps.push({ x, y: layer.y ?? 146, w, h, variant: Math.floor(rng() * 2) });
+          x += 16 + Math.floor(rng() * 24);
+        }
+      } else if (layer.kind === "hills") {
+        let x = -90;
+        while (x < level.width + 180) {
+          const w = 46 + Math.floor(rng() * 34);
+          const h = 12 + Math.floor(rng() * 10);
+          stamps.push({ x, y: layer.y ?? 157, w, h, variant: Math.floor(rng() * 3) });
+          x += 44 + Math.floor(rng() * 28);
+        }
+      } else if (layer.kind === "fenceLine") {
+        let x = -10;
+        while (x < level.width + 30) {
+          const h = 6 + Math.floor(rng() * 4);
+          stamps.push({ x, y: layer.y ?? 160, w: 2, h, variant: 0 });
+          x += 10 + Math.floor(rng() * 5);
+        }
+      } else if (layer.kind === "clouds") {
+        let x = -40;
+        while (x < level.width + 80) {
+          const w = 14 + Math.floor(rng() * 14);
+          const h = 4 + Math.floor(rng() * 4);
+          const y = 18 + Math.floor(rng() * 28);
+          stamps.push({ x, y, w, h, variant: 0 });
+          x += 40 + Math.floor(rng() * 60);
+        }
+      }
+
+      prepared.push({ ...layer, stamps });
+    }
+
+    return prepared;
+  }
+
+  private prepareDecorations(level: LevelDefinition): Decoration[] {
+    if (!level.decorations || level.decorations.length === 0) {
+      return [];
+    }
+
+    const noGo: Rect[] = [
+      { x: PLAYER_START_X - 20, y: 122, w: 92, h: 46 },
+      { x: this.exitGate.x - 18, y: this.exitGate.y - 8, w: this.exitGate.w + 36, h: this.exitGate.h + 10 },
+      { x: this.goldenToy.x - 16, y: this.goldenToy.y - 16, w: this.goldenToy.w + 32, h: this.goldenToy.h + 24 }
+    ];
+
+    const accepted: Decoration[] = [];
+    for (const decoration of level.decorations) {
+      const sprite = getDecorationSprite(decoration.kind, decoration.variant ?? 0);
+      const rect: Rect = {
+        x: decoration.x,
+        y: decoration.y - sprite.h,
+        w: sprite.w,
+        h: sprite.h
+      };
+      const blockedByNoGo = noGo.some((zone) => intersectsWithSkin(rect, zone, 0));
+      if (blockedByNoGo) {
+        continue;
+      }
+      const blockedBySolid = level.platforms.some((platform) => intersectsWithSkin(rect, platform, 0));
+      if (blockedBySolid) {
+        continue;
+      }
+      const blockedByDig = this.digSpots.some((spot) => intersectsWithSkin(rect, spot, 0));
+      if (blockedByDig) {
+        continue;
+      }
+      accepted.push(decoration);
+    }
+
+    return accepted;
+  }
+
+  private createAmbientPollen(level: LevelDefinition): AmbientPollenParticle[] {
+    const rng = createSeededRng(`${level.id}:ambient-pollen`);
+    const particles: AmbientPollenParticle[] = [];
+    for (let i = 0; i < AMBIENT_POLLEN_MAX; i += 1) {
+      particles.push({
+        x: Math.floor(rng() * level.width),
+        y: AMBIENT_POLLEN_BASELINE_Y + Math.floor((rng() - 0.5) * 36),
+        vx: -8 - rng() * 8,
+        phase: rng() * Math.PI * 2,
+        amp: 1 + rng() * 2,
+        speed: 0.8 + rng(),
+        size: rng() < 0.5 ? 1 : 2
+      });
+    }
+    return particles;
   }
 
   private currentLevel(): LevelDefinition {
@@ -1494,6 +1801,130 @@ function moveTowards(current: number, target: number, maxDelta: number): number 
     return target;
   }
   return current + Math.sign(target - current) * maxDelta;
+}
+
+interface DecorationSprite {
+  image: HTMLCanvasElement;
+  w: number;
+  h: number;
+}
+
+const decorationSpriteCache = new Map<string, DecorationSprite>();
+
+function getDecorationParallax(depth: DecorationDepth): number {
+  if (depth === "far") {
+    return 0.9;
+  }
+  if (depth === "near") {
+    return 1.04;
+  }
+  return 1.0;
+}
+
+function getDecorationSprite(kind: DecorationKind, variant: number): DecorationSprite {
+  const key = `${kind}:${variant}`;
+  const cached = decorationSpriteCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const sprite = createDecorationSprite(kind, variant);
+  decorationSpriteCache.set(key, sprite);
+  return sprite;
+}
+
+function createDecorationSprite(kind: DecorationKind, variant: number): DecorationSprite {
+  const make = (w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } => {
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Unable to create decoration sprite");
+    }
+    return { canvas, ctx };
+  };
+
+  if (kind === "grass" || kind === "weed") {
+    const { canvas, ctx } = make(6, 6);
+    const dark = kind === "weed" ? "#3b5d33" : "#477543";
+    const light = kind === "weed" ? "#4b7a3f" : "#67a35e";
+    ctx.fillStyle = dark;
+    ctx.fillRect(2, 3, 1, 3);
+    ctx.fillRect(3, 2, 1, 4);
+    ctx.fillStyle = light;
+    ctx.fillRect(1, 4, 1, 2);
+    ctx.fillRect(4, 4, 1, 2);
+    if (variant % 2 === 1) {
+      ctx.fillRect(0, 5, 1, 1);
+      ctx.fillRect(5, 5, 1, 1);
+    }
+    return { image: canvas, w: canvas.width, h: canvas.height };
+  }
+
+  if (kind === "flower") {
+    const { canvas, ctx } = make(6, 7);
+    const blossom = ["#f3d995", "#e8b4c3", "#f2e7b2"][variant % 3];
+    ctx.fillStyle = "#477543";
+    ctx.fillRect(2, 3, 1, 4);
+    ctx.fillStyle = blossom;
+    ctx.fillRect(1, 1, 3, 2);
+    ctx.fillStyle = "#f0e2a6";
+    ctx.fillRect(2, 2, 1, 1);
+    return { image: canvas, w: canvas.width, h: canvas.height };
+  }
+
+  if (kind === "bush") {
+    const { canvas, ctx } = make(14, 9);
+    const base = variant % 2 === 0 ? "#3f663f" : "#426b46";
+    ctx.fillStyle = base;
+    ctx.fillRect(2, 3, 10, 6);
+    ctx.fillRect(0, 5, 5, 4);
+    ctx.fillRect(9, 5, 5, 4);
+    ctx.fillStyle = "#5d8a5e";
+    ctx.fillRect(3, 4, 8, 3);
+    return { image: canvas, w: canvas.width, h: canvas.height };
+  }
+
+  if (kind === "rock") {
+    const { canvas, ctx } = make(8, 5);
+    ctx.fillStyle = variant % 2 === 0 ? "#6b6d74" : "#787980";
+    ctx.fillRect(1, 1, 6, 4);
+    ctx.fillStyle = "#8a8b91";
+    ctx.fillRect(2, 2, 2, 1);
+    return { image: canvas, w: canvas.width, h: canvas.height };
+  }
+
+  if (kind === "fencePost") {
+    const { canvas, ctx } = make(8, 12);
+    const c = variant % 2 === 0 ? "#806446" : "#735b3f";
+    ctx.fillStyle = c;
+    ctx.fillRect(3, 1, 2, 11);
+    ctx.fillRect(1, 4, 6, 1);
+    if (variant % 2 === 1) {
+      ctx.fillRect(0, 8, 6, 1);
+    }
+    return { image: canvas, w: canvas.width, h: canvas.height };
+  }
+
+  if (kind === "mushroom") {
+    const { canvas, ctx } = make(7, 7);
+    ctx.fillStyle = "#8f513a";
+    ctx.fillRect(1, 1, 5, 3);
+    ctx.fillStyle = "#eadab7";
+    ctx.fillRect(3, 4, 1, 3);
+    return { image: canvas, w: canvas.width, h: canvas.height };
+  }
+
+  // Vine fallback.
+  const { canvas, ctx } = make(6, 12);
+  const stem = variant % 2 === 0 ? "#3d6338" : "#3f6e41";
+  ctx.fillStyle = stem;
+  ctx.fillRect(2, 0, 1, 12);
+  ctx.fillRect(1, 3, 2, 1);
+  ctx.fillRect(2, 6, 2, 1);
+  ctx.fillRect(1, 9, 2, 1);
+  return { image: canvas, w: canvas.width, h: canvas.height };
 }
 
 function createPlaceholderPlayerSpriteSheet(): {

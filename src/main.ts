@@ -1,6 +1,7 @@
 import "./style.css";
 import { Game } from "./game";
 import { Input } from "./input";
+import { SoundManager } from "./sound";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
@@ -10,7 +11,7 @@ if (!app) {
 app.innerHTML = `
   <header class="top-bar">
     <h1>Sisu: Guardian of the Garden</h1>
-    <button id="soundToggle" type="button" aria-pressed="false">Sound: Off</button>
+    <button id="soundToggle" type="button" aria-pressed="true">Sound: On</button>
   </header>
   <main class="game-shell">
     <canvas id="gameCanvas" width="320" height="180" aria-label="Game canvas"></canvas>
@@ -73,12 +74,16 @@ if (
 const input = new Input();
 input.attachKeyboard(window);
 input.attachTouchButtons(controlButtons);
+const sound = new SoundManager();
 
 const game = new Game(canvas, input, {
+  sound,
   onGameOver: () => {
+    sound.stopMusic();
     gameOverOverlay.classList.remove("hidden");
   },
   onLevelComplete: ({ bonesCollected, heartsRemaining, timeSec }) => {
+    sound.stopMusic();
     levelStats.textContent = `Bones: ${bonesCollected} | Hearts: ${heartsRemaining} | Time: ${timeSec.toFixed(1)}s`;
     levelCompleteOverlay.classList.remove("hidden");
   }
@@ -86,20 +91,25 @@ const game = new Game(canvas, input, {
 
 const restartGame = (): void => {
   game.restart();
+  sound.startMusic();
   gameOverOverlay.classList.add("hidden");
   levelCompleteOverlay.classList.add("hidden");
 };
 
-let soundOn = false;
+let soundOn = true;
 soundToggle.addEventListener("click", () => {
+  void sound.unlock();
   soundOn = !soundOn;
+  sound.setEnabled(soundOn);
   soundToggle.textContent = `Sound: ${soundOn ? "On" : "Off"}`;
   soundToggle.setAttribute("aria-pressed", String(soundOn));
 });
 
 startButton.addEventListener("click", () => {
+  void sound.unlock();
   startOverlay.classList.add("hidden");
   game.start();
+  sound.startMusic();
 });
 
 restartButton.addEventListener("click", restartGame);

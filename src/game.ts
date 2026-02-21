@@ -1,5 +1,6 @@
 import { Enemy, type CollisionRect } from "./enemy";
 import type { Input } from "./input";
+import type { SoundManager } from "./sound";
 
 interface Rect {
   x: number;
@@ -65,6 +66,7 @@ interface LevelCompleteStats {
 interface GameCallbacks {
   onGameOver?: () => void;
   onLevelComplete?: (stats: LevelCompleteStats) => void;
+  sound?: SoundManager;
 }
 
 const INTERNAL_WIDTH = 320;
@@ -133,6 +135,7 @@ export class Game {
   private readonly input: Input;
   private readonly onGameOver?: () => void;
   private readonly onLevelComplete?: (stats: LevelCompleteStats) => void;
+  private readonly sound?: SoundManager;
   private readonly enemy: Enemy;
 
   private lastTick = 0;
@@ -183,6 +186,7 @@ export class Game {
     this.input = input;
     this.onGameOver = callbacks.onGameOver;
     this.onLevelComplete = callbacks.onLevelComplete;
+    this.sound = callbacks.sound;
     this.enemy = new Enemy(ENEMY_SPAWN);
     this.digSpots = this.generateDigSpots("level1");
 
@@ -322,6 +326,7 @@ export class Game {
         this.player.grounded = false;
         this.lastJumpPressedTimeMs = -Infinity;
         this.lastGroundedTimeMs = -Infinity;
+        this.sound?.playJump();
       }
 
       if (this.previousJumpHeld && !state.jumpHeld && this.player.vy < 0) {
@@ -441,6 +446,7 @@ export class Game {
       this.player.vy = -STOMP_BOUNCE_SPEED;
       this.player.grounded = false;
       this.lastGroundedTimeMs = -Infinity;
+      this.sound?.playStomp();
       return;
     }
 
@@ -456,6 +462,7 @@ export class Game {
     this.player.vx = playerCenter < enemyCenter ? -PLAYER_KNOCKBACK_X : PLAYER_KNOCKBACK_X;
     this.player.vy = -PLAYER_KNOCKBACK_Y;
     this.player.grounded = false;
+    this.sound?.playHurt();
 
     if (this.hearts <= 0) {
       this.gameState = "gameOver";
@@ -467,6 +474,8 @@ export class Game {
     if (!this.goldenToy.collected && intersectsWithSkin(this.player, this.goldenToy, 0)) {
       this.goldenToy.collected = true;
       this.hasGoldenToy = true;
+      this.sound?.playGoldenToyPickup();
+      this.sound?.playGateUnlock();
     }
 
     if (!intersectsWithSkin(this.player, EXIT_GATE, 0)) {
@@ -479,6 +488,7 @@ export class Game {
     }
 
     this.gameState = "levelComplete";
+    this.sound?.playLevelComplete();
     this.onLevelComplete?.({
       bonesCollected: this.bonesCollected,
       heartsRemaining: this.hearts,
@@ -513,6 +523,7 @@ export class Game {
       if (bone.state === "idle" && intersectsWithSkin(this.player, bone, 0)) {
         bone.active = false;
         this.bonesCollected += 1;
+        this.sound?.playBonePickup();
       }
     }
 
@@ -533,6 +544,7 @@ export class Game {
 
   private finishDig(): void {
     this.playerState = "normal";
+    this.sound?.playDig();
 
     if (this.activeDigSpotIndex === null) {
       return;

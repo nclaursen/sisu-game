@@ -156,34 +156,57 @@ const PLAYER_START_Y = 40;
 const LEVEL_WILD_GARDEN: LevelDefinition = {
   id: "wild-garden",
   name: "Wild Garden",
-  width: 2200,
+  width: 1800,
   height: INTERNAL_HEIGHT,
   backgroundColor: "#8bd3ff",
   platforms: [
-    { x: 0, y: 164, w: 2200, h: 16 },
-    { x: 70, y: 132, w: 86, h: 10 },
-    { x: 220, y: 110, w: 72, h: 10 },
-    { x: 390, y: 136, w: 92, h: 10 },
-    { x: 540, y: 102, w: 74, h: 10 },
-    { x: 700, y: 126, w: 84, h: 10 },
-    { x: 890, y: 98, w: 80, h: 10 },
-    { x: 1080, y: 136, w: 96, h: 10 },
-    { x: 1260, y: 108, w: 78, h: 10 },
-    { x: 1450, y: 124, w: 90, h: 10 },
-    { x: 1640, y: 96, w: 82, h: 10 },
-    { x: 1830, y: 130, w: 94, h: 10 },
-    { x: 2010, y: 112, w: 72, h: 10 }
+    { x: 0, y: 164, w: 1800, h: 16 },
+
+    // Intro Stretch
+    { x: 96, y: 136, w: 74, h: 10 },
+    { x: 232, y: 122, w: 62, h: 10 },
+
+    // First Pressure
+    { x: 410, y: 138, w: 84, h: 10 },
+    { x: 548, y: 120, w: 70, h: 10 },
+    { x: 668, y: 140, w: 72, h: 10 },
+
+    // Mid Challenge
+    { x: 804, y: 128, w: 86, h: 10 },
+    { x: 932, y: 108, w: 72, h: 10 },
+    { x: 1048, y: 128, w: 86, h: 10 },
+
+    // Golden Toy Area
+    { x: 1220, y: 130, w: 80, h: 10 },
+    { x: 1342, y: 108, w: 78, h: 10 },
+    { x: 1462, y: 90, w: 72, h: 10 },
+
+    // Gate Run
+    { x: 1584, y: 132, w: 88, h: 10 },
+    { x: 1708, y: 142, w: 64, h: 10 }
   ],
   enemySpawnPoints: [
-    { x: 120, groundY: 132 },
-    { x: 430, groundY: 136 },
-    { x: 740, groundY: 126 },
-    { x: 1120, groundY: 136 },
-    { x: 1500, groundY: 124 },
-    { x: 1860, groundY: 130 }
+    // Intro Stretch
+    { x: 160, groundY: 164 },
+
+    // First Pressure
+    { x: 448, groundY: 164 },
+    { x: 632, groundY: 164 },
+
+    // Mid Challenge
+    { x: 838, groundY: 128 },
+    { x: 1078, groundY: 128 },
+
+    // Golden Toy Area
+    { x: 1312, groundY: 130 },
+    { x: 1496, groundY: 90 },
+
+    // Gate Run
+    { x: 1628, groundY: 164 },
+    { x: 1738, groundY: 164 }
   ],
-  goldenToyPosition: { x: 1560, y: 82 },
-  exitGatePosition: { x: 2080, y: 132 },
+  goldenToyPosition: { x: 1452, y: 76 },
+  exitGatePosition: { x: 1682, y: 132 },
   digSeed: "wild-garden-seed"
 };
 

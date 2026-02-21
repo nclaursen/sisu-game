@@ -1,4 +1,4 @@
-import { Enemy, type CollisionRect } from "./enemy";
+import { Enemy, createEnemy, type CollisionRect, type EnemyType } from "./enemy";
 import type { Input } from "./input";
 import type { SoundManager } from "./sound";
 
@@ -48,6 +48,7 @@ interface DigParticle extends Rect {
   vy: number;
   lifeSec: number;
   maxLifeSec: number;
+  colorRgb: string;
 }
 
 interface DirtDecorTriangle {
@@ -122,6 +123,9 @@ const DIG_PARTICLE_LIFE_MAX_SEC = 0.35;
 const DIG_PARTICLE_EMIT_INTERVAL_SEC = 0.075;
 const DIG_PARTICLE_GRAVITY = 600;
 const DIG_PARTICLE_MAX_COUNT = 30;
+const ENEMY_SPAWN_POOF_MIN_PARTICLES = 8;
+const ENEMY_SPAWN_POOF_MAX_PARTICLES = 12;
+const ENEMY_SPAWN_POOF_COLOR = "170, 142, 104";
 
 const GATE_LOCKED_HINT_SEC = 1.5;
 
@@ -135,7 +139,24 @@ const LEVEL_PLATFORMS: Rect[] = [
   { x: 250, y: 138, w: 56, h: 10 }
 ];
 
-const ENEMY_SPAWN = { x: 78, y: 116 };
+const ENEMY_SPAWN_POINTS: ReadonlyArray<{ x: number; groundY: number }> = [
+  { x: 78, groundY: 128 },
+  { x: 176, groundY: 102 },
+  { x: 270, groundY: 138 },
+  { x: 236, groundY: 138 }
+];
+const ENEMY_TYPE_WEIGHTS: ReadonlyArray<{ type: EnemyType; weight: number }> = [
+  { type: "rat", weight: 0.5 },
+  { type: "mouse", weight: 0.3 },
+  { type: "tank", weight: 0.2 }
+];
+const MAX_ENEMIES_ALIVE = 3;
+const ENEMY_SPAWN_INTERVAL_MIN_SEC = 6;
+const ENEMY_SPAWN_INTERVAL_MAX_SEC = 10;
+const ENEMY_RESPAWN_DELAY_MIN_SEC = 2;
+const ENEMY_RESPAWN_DELAY_MAX_SEC = 3;
+const ENEMY_MIN_PLAYER_DISTANCE_X = 120;
+const ENEMY_MIN_SEPARATION_X = 22;
 const TOY_SPAWN: GoldenToy = { x: 186, y: 88, w: 8, h: 8, collected: false };
 const EXIT_GATE: ExitGate = { x: 292, y: 132, w: 18, h: 32 };
 
@@ -146,7 +167,7 @@ export class Game {
   private readonly onGameOver?: () => void;
   private readonly onLevelComplete?: (stats: LevelCompleteStats) => void;
   private readonly sound?: SoundManager;
-  private readonly enemy: Enemy;
+  private enemies: Enemy[] = [];
   private readonly playerSpriteImage: HTMLImageElement;
   private readonly playerAnimations: Record<PlayerAnimationName, Frame[]>;
   private playerSpriteReady = false;
@@ -178,6 +199,8 @@ export class Game {
   private goldenToy: GoldenToy = { ...TOY_SPAWN };
   private hasGoldenToy = false;
   private gateHintTimerSec = 0;
+  private spawnTimerSec = 0;
+  private pendingRespawnTimers: number[] = [];
 
   private readonly player: Player = {
     x: PLAYER_START_X,
@@ -203,8 +226,8 @@ export class Game {
     this.onGameOver = callbacks.onGameOver;
     this.onLevelComplete = callbacks.onLevelComplete;
     this.sound = callbacks.sound;
-    this.enemy = new Enemy(ENEMY_SPAWN);
     this.digSpots = this.generateDigSpots("level1");
+    this.resetEnemyWave();
     const playerSprite = createPlaceholderPlayerSpriteSheet();
     this.playerSpriteImage = playerSprite.image;
     this.playerAnimations = playerSprite.animations;
@@ -259,7 +282,7 @@ export class Game {
     this.playerAnimationFrameIndex = 0;
     this.playerAnimationFrameElapsed = 0;
 
-    this.enemy.reset();
+    this.resetEnemyWave();
     this.digSpots = this.generateDigSpots("level1");
     this.bones = [];
     this.digParticles = [];
@@ -379,7 +402,10 @@ export class Game {
       this.lastGroundedTimeMs = this.nowMs;
     }
 
-    this.enemy.update(delta, LEVEL_PLATFORMS, GRAVITY, TERMINAL_VELOCITY, COLLISION_SKIN);
+    this.updateEnemySpawning(delta);
+    for (const enemy of this.enemies) {
+      enemy.update(delta, LEVEL_PLATFORMS, GRAVITY, TERMINAL_VELOCITY, COLLISION_SKIN);
+    }
     this.handlePlayerEnemyCollision(previousPlayerBottom);
     this.updateBonesAndParticles(delta);
     this.handleGoldenToyAndGate();
@@ -452,47 +478,180 @@ export class Game {
   }
 
   private handlePlayerEnemyCollision(previousPlayerBottom: number): void {
-    if (!this.enemy.isAlive()) {
-      return;
-    }
+    for (let i = this.enemies.length - 1; i >= 0; i -= 1) {
+      const enemy = this.enemies[i];
+      if (!enemy.isAlive()) {
+        continue;
+      }
 
-    const enemyBody = this.enemy.getBody();
-    if (!intersectsWithSkin(this.player, enemyBody, 0)) {
-      return;
-    }
+      const enemyBody = enemy.getBody();
+      if (!intersectsWithSkin(this.player, enemyBody, 0)) {
+        continue;
+      }
 
-    const playerBottom = this.player.y + this.player.h;
-    const isStomp =
-      this.player.vy > 0 &&
-      previousPlayerBottom <= enemyBody.y + STOMP_TOLERANCE &&
-      playerBottom >= enemyBody.y;
+      const playerBottom = this.player.y + this.player.h;
+      const isStomp =
+        this.player.vy > 0 &&
+        previousPlayerBottom <= enemyBody.y + STOMP_TOLERANCE &&
+        playerBottom >= enemyBody.y;
 
-    if (isStomp) {
-      this.enemy.kill();
-      this.player.vy = -STOMP_BOUNCE_SPEED;
+      if (isStomp) {
+        const stompResult = enemy.applyStomp();
+        this.player.vy = -STOMP_BOUNCE_SPEED;
+        this.player.grounded = false;
+        this.lastGroundedTimeMs = -Infinity;
+        this.sound?.playStomp();
+
+        if (stompResult === "killed") {
+          this.enemies.splice(i, 1);
+          this.pendingRespawnTimers.push(this.randomRange(ENEMY_RESPAWN_DELAY_MIN_SEC, ENEMY_RESPAWN_DELAY_MAX_SEC));
+        }
+        return;
+      }
+
+      if (this.invincibleTimerSec > 0 || !enemy.canDamagePlayer()) {
+        continue;
+      }
+
+      this.hearts = Math.max(0, this.hearts - 1);
+      this.invincibleTimerSec = PLAYER_IFRAMES_SEC;
+
+      const playerCenter = this.player.x + this.player.w / 2;
+      const enemyCenter = enemyBody.x + enemyBody.w / 2;
+      this.player.vx = playerCenter < enemyCenter ? -PLAYER_KNOCKBACK_X : PLAYER_KNOCKBACK_X;
+      this.player.vy = -PLAYER_KNOCKBACK_Y;
       this.player.grounded = false;
-      this.lastGroundedTimeMs = -Infinity;
-      this.sound?.playStomp();
+      this.sound?.playHurt();
+
+      if (this.hearts <= 0) {
+        this.gameState = "gameOver";
+        this.onGameOver?.();
+      }
       return;
     }
+  }
 
-    if (this.invincibleTimerSec > 0) {
-      return;
+  private resetEnemyWave(): void {
+    this.enemies = [];
+    this.pendingRespawnTimers = [];
+    this.spawnTimerSec = this.randomRange(ENEMY_SPAWN_INTERVAL_MIN_SEC, ENEMY_SPAWN_INTERVAL_MAX_SEC);
+    this.spawnEnemyIfPossible();
+  }
+
+  private updateEnemySpawning(delta: number): void {
+    this.spawnTimerSec -= delta;
+    if (this.spawnTimerSec <= 0) {
+      this.spawnEnemyIfPossible();
+      this.spawnTimerSec = this.randomRange(ENEMY_SPAWN_INTERVAL_MIN_SEC, ENEMY_SPAWN_INTERVAL_MAX_SEC);
     }
 
-    this.hearts = Math.max(0, this.hearts - 1);
-    this.invincibleTimerSec = PLAYER_IFRAMES_SEC;
+    for (let i = this.pendingRespawnTimers.length - 1; i >= 0; i -= 1) {
+      this.pendingRespawnTimers[i] -= delta;
+      if (this.pendingRespawnTimers[i] <= 0) {
+        const spawned = this.spawnEnemyIfPossible();
+        if (spawned) {
+          this.pendingRespawnTimers.splice(i, 1);
+        } else {
+          this.pendingRespawnTimers[i] = 1.0;
+        }
+      }
+    }
+  }
 
-    const playerCenter = this.player.x + this.player.w / 2;
-    const enemyCenter = enemyBody.x + enemyBody.w / 2;
-    this.player.vx = playerCenter < enemyCenter ? -PLAYER_KNOCKBACK_X : PLAYER_KNOCKBACK_X;
-    this.player.vy = -PLAYER_KNOCKBACK_Y;
-    this.player.grounded = false;
-    this.sound?.playHurt();
+  private spawnEnemyIfPossible(): boolean {
+    if (this.enemies.length >= MAX_ENEMIES_ALIVE) {
+      return false;
+    }
 
-    if (this.hearts <= 0) {
-      this.gameState = "gameOver";
-      this.onGameOver?.();
+    const enemyType = this.pickEnemyType();
+    const tempEnemy = createEnemy(enemyType, 0, 0);
+    const enemySize = tempEnemy.getBody();
+
+    const playerCenterX = this.player.x + this.player.w / 2;
+    const shuffled = [...ENEMY_SPAWN_POINTS].sort(() => Math.random() - 0.5);
+
+    for (const spawnPoint of shuffled) {
+      const candidateX = spawnPoint.x;
+      const candidateY = spawnPoint.groundY - enemySize.h - 0.01;
+      const candidate: CollisionRect = { x: candidateX, y: candidateY, w: enemySize.w, h: enemySize.h };
+      const candidateCenterX = candidateX + candidate.w / 2;
+
+      if (Math.abs(candidateCenterX - playerCenterX) < ENEMY_MIN_PLAYER_DISTANCE_X) {
+        continue;
+      }
+
+      const tooCloseToEnemy = this.enemies.some((enemy) => {
+        const body = enemy.getBody();
+        const centerX = body.x + body.w / 2;
+        return Math.abs(centerX - candidateCenterX) < ENEMY_MIN_SEPARATION_X;
+      });
+      if (tooCloseToEnemy) {
+        continue;
+      }
+
+      const intersectsPlatform = LEVEL_PLATFORMS.some((platform) => intersectsWithSkin(candidate, platform, 0));
+      if (intersectsPlatform) {
+        continue;
+      }
+
+      const hasGroundBelow = LEVEL_PLATFORMS.some((platform) => {
+        const footX = candidate.x + candidate.w / 2;
+        const footY = candidate.y + candidate.h + 2;
+        const withinX = footX >= platform.x && footX <= platform.x + platform.w;
+        const nearY = footY >= platform.y && footY <= platform.y + platform.h + 2;
+        return withinX && nearY;
+      });
+      if (!hasGroundBelow) {
+        continue;
+      }
+
+      const facing: 1 | -1 = candidateCenterX > playerCenterX ? -1 : 1;
+      const enemy = createEnemy(enemyType, candidate.x, candidate.y, facing);
+      this.enemies.push(enemy);
+      this.emitEnemySpawnPoof(enemy.getBody());
+      return true;
+    }
+
+    return false;
+  }
+
+  private pickEnemyType(): EnemyType {
+    const roll = Math.random();
+    let cursor = 0;
+    for (const entry of ENEMY_TYPE_WEIGHTS) {
+      cursor += entry.weight;
+      if (roll <= cursor) {
+        return entry.type;
+      }
+    }
+    return "rat";
+  }
+
+  private randomRange(min: number, max: number): number {
+    return min + Math.random() * (max - min);
+  }
+
+  private emitEnemySpawnPoof(spawnRect: CollisionRect): void {
+    const count = Math.floor(this.randomRange(ENEMY_SPAWN_POOF_MIN_PARTICLES, ENEMY_SPAWN_POOF_MAX_PARTICLES + 1));
+    const centerX = spawnRect.x + spawnRect.w / 2;
+    const centerY = spawnRect.y + spawnRect.h - 2;
+
+    for (let i = 0; i < count; i += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = this.randomRange(22, 70);
+      const size = Math.random() < 0.5 ? 2 : 3;
+      const life = this.randomRange(0.25, 0.35);
+      this.pushDigParticle({
+        x: centerX + Math.cos(angle) * 2,
+        y: centerY + Math.sin(angle) * 1.5,
+        w: size,
+        h: size,
+        vx: clamp(Math.cos(angle) * speed, -60, 60),
+        vy: clamp(Math.sin(angle) * speed - 80, -120, -40),
+        lifeSec: life,
+        maxLifeSec: life,
+        colorRgb: ENEMY_SPAWN_POOF_COLOR
+      });
     }
   }
 
@@ -629,7 +788,8 @@ export class Game {
         vx: spread * 16,
         vy: -45 - Math.abs(spread) * 5,
         lifeSec: DIG_PARTICLE_LIFE_SEC,
-        maxLifeSec: DIG_PARTICLE_LIFE_SEC
+        maxLifeSec: DIG_PARTICLE_LIFE_SEC,
+        colorRgb: "120, 78, 42"
       });
     }
   }
@@ -659,7 +819,8 @@ export class Game {
           vx: lerp(-40, 40, Math.random()),
           vy: lerp(-120, -60, Math.random()),
           lifeSec: life,
-          maxLifeSec: life
+          maxLifeSec: life,
+          colorRgb: "120, 78, 42"
         });
       }
     }
@@ -706,7 +867,8 @@ export class Game {
       const x = Math.floor(lerp(minX, maxX, rng()));
       const centerX = x + DIG_SPOT_WIDTH / 2;
 
-      if (Math.abs(centerX - ENEMY_SPAWN.x) < DIG_MIN_DISTANCE_FROM_ENEMY) {
+      const tooCloseToEnemySpawn = ENEMY_SPAWN_POINTS.some((spawn) => Math.abs(centerX - spawn.x) < DIG_MIN_DISTANCE_FROM_ENEMY);
+      if (tooCloseToEnemySpawn) {
         continue;
       }
 
@@ -755,7 +917,9 @@ export class Game {
     this.drawDigSpots();
     this.drawBones();
     this.drawDigParticles();
-    this.enemy.draw(this.ctx);
+    for (const enemy of this.enemies) {
+      enemy.draw(this.ctx);
+    }
     this.drawPlayer();
     this.drawHud();
     if (this.gateHintTimerSec > 0) {
@@ -862,7 +1026,7 @@ export class Game {
   private drawDigParticles(): void {
     for (const particle of this.digParticles) {
       const alpha = clamp(particle.lifeSec / particle.maxLifeSec, 0, 1);
-      this.ctx.fillStyle = `rgba(120, 78, 42, ${alpha.toFixed(3)})`;
+      this.ctx.fillStyle = `rgba(${particle.colorRgb}, ${alpha.toFixed(3)})`;
       this.ctx.fillRect(particle.x, particle.y, particle.w, particle.h);
     }
   }
@@ -1112,50 +1276,93 @@ function createPlaceholderPlayerSpriteSheet(): {
     const y = row * frameSize;
     ctx.clearRect(x, y, frameSize, frameSize);
 
-    const bodyColor = "#2f4f6f";
-    const accent = "#6e98bf";
-    const light = "#e4f1ff";
+    const outline = "#1b1513";
+    const maskDark = "#2a1d1a";
+    const coatDark = "#3a2a22";
+    const coatMid = "#5a3e2f";
+    const cream = "#d8bf92";
+    const creamLight = "#f0dfbe";
     const dirt = "#7f5b38";
 
-    // Body block.
-    ctx.fillStyle = bodyColor;
-    ctx.fillRect(x + 6, y + 10, 12, 10);
-    // Head.
-    ctx.fillRect(x + 11, y + 7, 8, 7);
-    // Ear.
-    ctx.fillRect(x + 14, y + 5, 2, 2);
-    // Tail.
-    const tailY = variant === "runA" || variant === "runC" ? 12 : 11;
-    ctx.fillRect(x + 4, y + tailY, 2, 4);
-    // Eye.
-    ctx.fillStyle = light;
-    ctx.fillRect(x + 16, y + 9, 1, 1);
-    // Belly accent.
-    ctx.fillStyle = accent;
-    ctx.fillRect(x + 8, y + 14, 8, 3);
+    const isRun = variant === "runA" || variant === "runB" || variant === "runC" || variant === "runD";
+    const isDig = variant === "digA" || variant === "digB";
+    const isJump = variant === "jump";
+    const isIdleB = variant === "idleB";
 
-    // Legs vary by animation frame.
-    ctx.fillStyle = bodyColor;
+    const headX = x + 11;
+    const headY = y + (isIdleB ? 6 : 7);
+    const bodyX = x + 7;
+    const bodyY = y + (isRun ? 11 : 12);
+
+    // Tail plume (slight sway/trail by frame).
+    const tailOffsetY = variant === "runA" || variant === "runD" ? -1 : variant === "runB" || variant === "runC" ? 0 : isIdleB ? -1 : 0;
+    const tailOffsetX = variant === "runC" ? -1 : 0;
+    ctx.fillStyle = outline;
+    ctx.fillRect(x + 3 + tailOffsetX, y + 8 + tailOffsetY, 4, 7);
+    ctx.fillStyle = coatMid;
+    ctx.fillRect(x + 4 + tailOffsetX, y + 8 + tailOffsetY, 3, 6);
+    ctx.fillStyle = cream;
+    ctx.fillRect(x + 4 + tailOffsetX, y + 8 + tailOffsetY, 2, 2);
+
+    // Body and back.
+    ctx.fillStyle = outline;
+    ctx.fillRect(bodyX, bodyY, 12, 8);
+    ctx.fillStyle = coatDark;
+    ctx.fillRect(bodyX + 1, bodyY, 10, 7);
+    ctx.fillStyle = coatMid;
+    ctx.fillRect(bodyX + 2, bodyY + 3, 8, 4);
+
+    // Head (slightly larger heroic puppy head).
+    ctx.fillStyle = outline;
+    ctx.fillRect(headX, headY, 9, 8);
+    ctx.fillStyle = coatDark;
+    ctx.fillRect(headX + 1, headY + 1, 7, 6);
+
+    // Pointy ears.
+    const earTwitch = isIdleB ? -1 : 0;
+    ctx.fillStyle = outline;
+    ctx.fillRect(headX + 1, headY - 2 + earTwitch, 2, 2);
+    ctx.fillRect(headX + 6, headY - 3, 2, 3);
+    ctx.fillStyle = cream;
+    ctx.fillRect(headX + 2, headY - 1 + earTwitch, 1, 1);
+    ctx.fillRect(headX + 6, headY - 1, 1, 1);
+
+    // Dark mask and cream markings.
+    ctx.fillStyle = maskDark;
+    ctx.fillRect(headX + 3, headY + 2, 5, 4);
+    ctx.fillStyle = cream;
+    ctx.fillRect(headX + 4, headY + 1, 1, 1); // eyebrow L
+    ctx.fillRect(headX + 6, headY + 1, 1, 1); // eyebrow R
+    ctx.fillRect(headX + 6, headY + 4, 2, 2); // muzzle
+    ctx.fillStyle = creamLight;
+    ctx.fillRect(headX + 6, headY + 3, 1, 1);
+
+    // Cream chest fluff.
+    ctx.fillStyle = cream;
+    ctx.fillRect(bodyX + 8, bodyY + 5, 4, 3);
+    ctx.fillStyle = creamLight;
+    ctx.fillRect(bodyX + 9, bodyY + 5, 2, 2);
+
+    // Legs by animation.
+    ctx.fillStyle = outline;
     if (variant === "runA") {
-      ctx.fillRect(x + 7, y + 19, 2, 2);
-      ctx.fillRect(x + 14, y + 18, 2, 3);
+      ctx.fillRect(bodyX + 1, bodyY + 7, 2, 2);
+      ctx.fillRect(bodyX + 7, bodyY + 6, 2, 3);
     } else if (variant === "runB") {
-      ctx.fillRect(x + 8, y + 18, 2, 3);
-      ctx.fillRect(x + 13, y + 19, 2, 2);
+      ctx.fillRect(bodyX + 2, bodyY + 6, 2, 3);
+      ctx.fillRect(bodyX + 8, bodyY + 7, 2, 2);
     } else if (variant === "runC") {
-      ctx.fillRect(x + 7, y + 18, 2, 3);
-      ctx.fillRect(x + 14, y + 19, 2, 2);
+      ctx.fillRect(bodyX + 1, bodyY + 6, 2, 3);
+      ctx.fillRect(bodyX + 8, bodyY + 7, 2, 2);
     } else if (variant === "runD") {
-      ctx.fillRect(x + 8, y + 19, 2, 2);
-      ctx.fillRect(x + 13, y + 18, 2, 3);
-    } else if (variant === "jump") {
-      ctx.fillRect(x + 8, y + 17, 2, 2);
-      ctx.fillRect(x + 13, y + 17, 2, 2);
-      ctx.fillStyle = accent;
-      ctx.fillRect(x + 6, y + 21, 12, 1);
-    } else if (variant === "digA" || variant === "digB") {
-      ctx.fillRect(x + 7, y + 19, 2, 2);
-      ctx.fillRect(x + 13, y + 19, 2, 2);
+      ctx.fillRect(bodyX + 2, bodyY + 7, 2, 2);
+      ctx.fillRect(bodyX + 7, bodyY + 6, 2, 3);
+    } else if (isJump) {
+      ctx.fillRect(bodyX + 2, bodyY + 6, 2, 2);
+      ctx.fillRect(bodyX + 8, bodyY + 6, 2, 2);
+    } else if (isDig) {
+      ctx.fillRect(bodyX + 2, bodyY + 7, 2, 2);
+      ctx.fillRect(bodyX + 8, bodyY + 7, 2, 2);
       ctx.fillStyle = dirt;
       ctx.fillRect(x + 5, y + 20, 14, 3);
       if (variant === "digB") {
@@ -1163,10 +1370,8 @@ function createPlaceholderPlayerSpriteSheet(): {
         ctx.fillRect(x + 18, y + 19, 2, 2);
       }
     } else {
-      // idle
-      const legOffset = variant === "idleB" ? 1 : 0;
-      ctx.fillRect(x + 8, y + 19 - legOffset, 2, 2 + legOffset);
-      ctx.fillRect(x + 13, y + 19, 2, 2);
+      ctx.fillRect(bodyX + 2, bodyY + 7, 2, 2);
+      ctx.fillRect(bodyX + 8, bodyY + 7, 2, 2);
     }
   };
 

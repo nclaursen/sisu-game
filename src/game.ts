@@ -19,6 +19,7 @@ interface Player extends Rect {
 interface DigSpot extends Rect {
   dug: boolean;
   hasBone: boolean;
+  dirtDecor: DirtDecorTriangle[];
 }
 
 interface BoneCollectible extends Rect {
@@ -36,6 +37,14 @@ interface DigParticle extends Rect {
   vy: number;
   lifeSec: number;
   maxLifeSec: number;
+}
+
+interface DirtDecorTriangle {
+  xOffset: number;
+  yOffset: number;
+  size: number;
+  shadeIndex: number;
+  flipX: boolean;
 }
 
 type PlayerActionState = "normal" | "digging";
@@ -82,6 +91,11 @@ const BONE_POP_INITIAL_VY = -120;
 const BONE_POP_GRAVITY = 520;
 const BONE_SETTLE_RANGE = 2.5;
 const DIG_PARTICLE_LIFE_SEC = 0.45;
+const DIG_PARTICLE_LIFE_MIN_SEC = 0.2;
+const DIG_PARTICLE_LIFE_MAX_SEC = 0.35;
+const DIG_PARTICLE_EMIT_INTERVAL_SEC = 0.075;
+const DIG_PARTICLE_GRAVITY = 600;
+const DIG_PARTICLE_MAX_COUNT = 30;
 
 const PLAYER_START_X = 16;
 const PLAYER_START_Y = 40;
@@ -120,6 +134,7 @@ export class Game {
   private digSpots: DigSpot[] = [];
   private bones: BoneCollectible[] = [];
   private digParticles: DigParticle[] = [];
+  private digEmitTimerSec = 0;
 
   private readonly player: Player = {
     x: PLAYER_START_X,
@@ -179,6 +194,7 @@ export class Game {
     this.playerState = "normal";
     this.digTimerSec = 0;
     this.activeDigSpotIndex = null;
+    this.digEmitTimerSec = 0;
 
     this.player.x = PLAYER_START_X;
     this.player.y = PLAYER_START_Y;
@@ -277,6 +293,7 @@ export class Game {
         this.player.vx = moveTowards(this.player.vx, 0, GROUND_FRICTION * delta);
       }
 
+      this.emitDigParticlesWhileDigging(delta);
       this.digTimerSec -= delta;
       if (this.digTimerSec <= 0) {
         this.finishDig();
@@ -447,7 +464,7 @@ export class Game {
 
       particle.x += particle.vx * delta;
       particle.y += particle.vy * delta;
-      particle.vy += 280 * delta;
+      particle.vy += DIG_PARTICLE_GRAVITY * delta;
     }
   }
 
@@ -503,7 +520,7 @@ export class Game {
 
     for (let i = 0; i < particleCount; i += 1) {
       const spread = i - (particleCount - 1) / 2;
-      this.digParticles.push({
+      this.pushDigParticle({
         x: centerX + spread * 2,
         y: centerY,
         w: 3,
@@ -513,6 +530,44 @@ export class Game {
         lifeSec: DIG_PARTICLE_LIFE_SEC,
         maxLifeSec: DIG_PARTICLE_LIFE_SEC
       });
+    }
+  }
+
+  private emitDigParticlesWhileDigging(delta: number): void {
+    if (this.activeDigSpotIndex === null) {
+      return;
+    }
+
+    const spot = this.digSpots[this.activeDigSpotIndex];
+    if (!spot) {
+      return;
+    }
+
+    this.digEmitTimerSec -= delta;
+    while (this.digEmitTimerSec <= 0) {
+      this.digEmitTimerSec += DIG_PARTICLE_EMIT_INTERVAL_SEC;
+      const burstCount = 1 + Math.floor(Math.random() * 2);
+      for (let i = 0; i < burstCount; i += 1) {
+        const size = Math.random() < 0.5 ? 2 : 3;
+        const life = lerp(DIG_PARTICLE_LIFE_MIN_SEC, DIG_PARTICLE_LIFE_MAX_SEC, Math.random());
+        this.pushDigParticle({
+          x: spot.x + spot.w * (0.25 + Math.random() * 0.5),
+          y: spot.y + spot.h - 1,
+          w: size,
+          h: size,
+          vx: lerp(-40, 40, Math.random()),
+          vy: lerp(-120, -60, Math.random()),
+          lifeSec: life,
+          maxLifeSec: life
+        });
+      }
+    }
+  }
+
+  private pushDigParticle(particle: DigParticle): void {
+    this.digParticles.push(particle);
+    if (this.digParticles.length > DIG_PARTICLE_MAX_COUNT) {
+      this.digParticles.splice(0, this.digParticles.length - DIG_PARTICLE_MAX_COUNT);
     }
   }
 
@@ -568,7 +623,8 @@ export class Game {
         w: DIG_SPOT_WIDTH,
         h: DIG_SPOT_HEIGHT,
         dug: false,
-        hasBone: rng() < DIG_BONE_CHANCE
+        hasBone: rng() < DIG_BONE_CHANCE,
+        dirtDecor: createSpotDirtDecor(`${levelSeed}:${x}:${spotY}`)
       };
 
       if (!isValidDigSpot(candidate, LEVEL_PLATFORMS)) {
@@ -619,6 +675,7 @@ export class Game {
       } else {
         this.ctx.fillStyle = "#3f3c34";
         this.ctx.fillRect(spot.x + 2, spot.y + 2, spot.w - 4, 2);
+        this.drawDugSpotDecor(spot);
       }
 
       if (this.debugEnabled) {
@@ -646,6 +703,24 @@ export class Game {
       const alpha = clamp(particle.lifeSec / particle.maxLifeSec, 0, 1);
       this.ctx.fillStyle = `rgba(120, 78, 42, ${alpha.toFixed(3)})`;
       this.ctx.fillRect(particle.x, particle.y, particle.w, particle.h);
+    }
+  }
+
+  private drawDugSpotDecor(spot: DigSpot): void {
+    const shades = ["#7f6948", "#6f5b3f", "#8d7450"];
+    for (const tri of spot.dirtDecor) {
+      const x = spot.x + tri.xOffset;
+      const y = spot.y + tri.yOffset;
+      const size = tri.size;
+      const dir = tri.flipX ? -1 : 1;
+
+      this.ctx.fillStyle = shades[tri.shadeIndex % shades.length];
+      this.ctx.beginPath();
+      this.ctx.moveTo(x, y);
+      this.ctx.lineTo(x + dir * size, y + 1);
+      this.ctx.lineTo(x, y + size);
+      this.ctx.closePath();
+      this.ctx.fill();
     }
   }
 
@@ -772,6 +847,25 @@ function createSeededRng(seed: string): () => number {
   }
 
   return mulberry32(h >>> 0);
+}
+
+function createSpotDirtDecor(seed: string): DirtDecorTriangle[] {
+  const rng = createSeededRng(seed);
+  const count = 3 + Math.floor(rng() * 3);
+  const decor: DirtDecorTriangle[] = [];
+
+  for (let i = 0; i < count; i += 1) {
+    const onLeft = i % 2 === 0;
+    decor.push({
+      xOffset: onLeft ? 1 + Math.floor(rng() * 4) : DIG_SPOT_WIDTH - 2 - Math.floor(rng() * 4),
+      yOffset: 1 + Math.floor(rng() * 4),
+      size: 2 + Math.floor(rng() * 3),
+      shadeIndex: Math.floor(rng() * 3),
+      flipX: !onLeft
+    });
+  }
+
+  return decor;
 }
 
 function mulberry32(a: number): () => number {

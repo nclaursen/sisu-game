@@ -65,18 +65,36 @@ interface GoldenToy extends Rect {
 
 interface ExitGate extends Rect {}
 
+interface SpawnPoint {
+  x: number;
+  groundY: number;
+}
+
+interface LevelDefinition {
+  id: string;
+  name: string;
+  backgroundColor: string;
+  platforms: Rect[];
+  enemySpawnPoints: SpawnPoint[];
+  goldenToyPosition: { x: number; y: number };
+  exitGatePosition: { x: number; y: number };
+  digSeed: string;
+}
+
 type PlayerActionState = "normal" | "digging";
-type GameState = "playing" | "gameOver" | "levelComplete";
+type GameState = "playing" | "gameOver" | "levelComplete" | "demoComplete";
 
 interface LevelCompleteStats {
   bonesCollected: number;
   heartsRemaining: number;
   timeSec: number;
+  levelName: string;
 }
 
 interface GameCallbacks {
   onGameOver?: () => void;
-  onLevelComplete?: (stats: LevelCompleteStats) => void;
+  onLevelComplete?: (stats: LevelCompleteStats & { hasNextLevel: boolean }) => void;
+  onDemoComplete?: (stats: LevelCompleteStats) => void;
   sound?: SoundManager;
 }
 
@@ -132,19 +150,71 @@ const GATE_LOCKED_HINT_SEC = 1.5;
 const PLAYER_START_X = 16;
 const PLAYER_START_Y = 40;
 
-const LEVEL_PLATFORMS: Rect[] = [
-  { x: 0, y: 164, w: 320, h: 16 },
-  { x: 52, y: 128, w: 72, h: 10 },
-  { x: 160, y: 102, w: 62, h: 10 },
-  { x: 250, y: 138, w: 56, h: 10 }
-];
+const LEVEL_WILD_GARDEN: LevelDefinition = {
+  id: "wild-garden",
+  name: "Wild Garden",
+  backgroundColor: "#8bd3ff",
+  platforms: [
+    { x: 0, y: 164, w: 320, h: 16 },
+    { x: 52, y: 128, w: 72, h: 10 },
+    { x: 160, y: 102, w: 62, h: 10 },
+    { x: 250, y: 138, w: 56, h: 10 }
+  ],
+  enemySpawnPoints: [
+    { x: 78, groundY: 128 },
+    { x: 176, groundY: 102 },
+    { x: 270, groundY: 138 },
+    { x: 236, groundY: 138 }
+  ],
+  goldenToyPosition: { x: 186, y: 88 },
+  exitGatePosition: { x: 292, y: 132 },
+  digSeed: "wild-garden-seed"
+};
 
-const ENEMY_SPAWN_POINTS: ReadonlyArray<{ x: number; groundY: number }> = [
-  { x: 78, groundY: 128 },
-  { x: 176, groundY: 102 },
-  { x: 270, groundY: 138 },
-  { x: 236, groundY: 138 }
-];
+const LEVEL_COURTYARD: LevelDefinition = {
+  id: "courtyard",
+  name: "Courtyard",
+  backgroundColor: "#d9dde2",
+  platforms: [
+    { x: 0, y: 164, w: 320, h: 16 },
+    { x: 26, y: 138, w: 70, h: 10 },
+    { x: 116, y: 118, w: 58, h: 10 },
+    { x: 190, y: 98, w: 52, h: 10 },
+    { x: 246, y: 128, w: 54, h: 10 }
+  ],
+  enemySpawnPoints: [
+    { x: 34, groundY: 138 },
+    { x: 124, groundY: 118 },
+    { x: 198, groundY: 98 },
+    { x: 258, groundY: 128 }
+  ],
+  goldenToyPosition: { x: 204, y: 84 },
+  exitGatePosition: { x: 292, y: 132 },
+  digSeed: "courtyard-seed"
+};
+
+const LEVEL_SNOW_GARDEN: LevelDefinition = {
+  id: "snow-garden",
+  name: "Snow Garden",
+  backgroundColor: "#b7d4ef",
+  platforms: [
+    { x: 0, y: 164, w: 320, h: 16 },
+    { x: 52, y: 128, w: 72, h: 10 },
+    { x: 160, y: 102, w: 62, h: 10 },
+    { x: 250, y: 138, w: 56, h: 10 }
+  ],
+  enemySpawnPoints: [
+    { x: 78, groundY: 128 },
+    { x: 176, groundY: 102 },
+    { x: 270, groundY: 138 },
+    { x: 236, groundY: 138 }
+  ],
+  goldenToyPosition: { x: 186, y: 88 },
+  exitGatePosition: { x: 292, y: 132 },
+  digSeed: "snow-garden-seed"
+};
+
+const LEVELS: ReadonlyArray<LevelDefinition> = [LEVEL_WILD_GARDEN, LEVEL_COURTYARD, LEVEL_SNOW_GARDEN];
 const ENEMY_TYPE_WEIGHTS: ReadonlyArray<{ type: EnemyType; weight: number }> = [
   { type: "rat", weight: 0.5 },
   { type: "mouse", weight: 0.3 },
@@ -157,15 +227,16 @@ const ENEMY_RESPAWN_DELAY_MIN_SEC = 2;
 const ENEMY_RESPAWN_DELAY_MAX_SEC = 3;
 const ENEMY_MIN_PLAYER_DISTANCE_X = 120;
 const ENEMY_MIN_SEPARATION_X = 22;
-const TOY_SPAWN: GoldenToy = { x: 186, y: 88, w: 8, h: 8, collected: false };
-const EXIT_GATE: ExitGate = { x: 292, y: 132, w: 18, h: 32 };
+const TOY_SIZE = { w: 8, h: 8 };
+const EXIT_GATE_SIZE = { w: 18, h: 32 };
 
 export class Game {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly input: Input;
   private readonly onGameOver?: () => void;
-  private readonly onLevelComplete?: (stats: LevelCompleteStats) => void;
+  private readonly onLevelComplete?: (stats: LevelCompleteStats & { hasNextLevel: boolean }) => void;
+  private readonly onDemoComplete?: (stats: LevelCompleteStats) => void;
   private readonly sound?: SoundManager;
   private enemies: Enemy[] = [];
   private readonly playerSpriteImage: HTMLImageElement;
@@ -187,6 +258,8 @@ export class Game {
   private invincibleTimerSec = 0;
   private gameState: GameState = "playing";
   private elapsedSec = 0;
+  private levelIndex = 0;
+  private levelTitleTimerSec = 0;
 
   private playerState: PlayerActionState = "normal";
   private digTimerSec = 0;
@@ -196,7 +269,8 @@ export class Game {
   private digParticles: DigParticle[] = [];
   private digEmitTimerSec = 0;
 
-  private goldenToy: GoldenToy = { ...TOY_SPAWN };
+  private goldenToy: GoldenToy = { x: 0, y: 0, w: TOY_SIZE.w, h: TOY_SIZE.h, collected: false };
+  private exitGate: ExitGate = { x: 0, y: 0, w: EXIT_GATE_SIZE.w, h: EXIT_GATE_SIZE.h };
   private hasGoldenToy = false;
   private gateHintTimerSec = 0;
   private spawnTimerSec = 0;
@@ -225,9 +299,9 @@ export class Game {
     this.input = input;
     this.onGameOver = callbacks.onGameOver;
     this.onLevelComplete = callbacks.onLevelComplete;
+    this.onDemoComplete = callbacks.onDemoComplete;
     this.sound = callbacks.sound;
-    this.digSpots = this.generateDigSpots("level1");
-    this.resetEnemyWave();
+    this.loadLevel(0);
     const playerSprite = createPlaceholderPlayerSpriteSheet();
     this.playerSpriteImage = playerSprite.image;
     this.playerAnimations = playerSprite.animations;
@@ -257,6 +331,43 @@ export class Game {
   }
 
   restart(): void {
+    this.loadLevel(this.levelIndex);
+  }
+
+  restartFromFirstLevel(): void {
+    this.loadLevel(0);
+  }
+
+  nextLevel(): boolean {
+    if (this.levelIndex + 1 >= LEVELS.length) {
+      this.gameState = "demoComplete";
+      this.onDemoComplete?.({
+        bonesCollected: this.bonesCollected,
+        heartsRemaining: this.hearts,
+        timeSec: this.elapsedSec,
+        levelName: this.currentLevel().name
+      });
+      return false;
+    }
+    this.loadLevel(this.levelIndex + 1);
+    return true;
+  }
+
+  isDemoComplete(): boolean {
+    return this.gameState === "demoComplete";
+  }
+
+  getCurrentLevelName(): string {
+    return this.currentLevel().name;
+  }
+
+  hasNextLevel(): boolean {
+    return this.levelIndex + 1 < LEVELS.length;
+  }
+
+  private loadLevel(index: number): void {
+    this.levelIndex = clamp(index, 0, LEVELS.length - 1);
+
     this.hearts = MAX_HEARTS;
     this.bonesCollected = 0;
     this.invincibleTimerSec = 0;
@@ -283,13 +394,26 @@ export class Game {
     this.playerAnimationFrameElapsed = 0;
 
     this.resetEnemyWave();
-    this.digSpots = this.generateDigSpots("level1");
+    this.digSpots = this.generateDigSpots(this.currentLevel().digSeed);
     this.bones = [];
     this.digParticles = [];
 
-    this.goldenToy = { ...TOY_SPAWN, collected: false };
+    this.goldenToy = {
+      x: this.currentLevel().goldenToyPosition.x,
+      y: this.currentLevel().goldenToyPosition.y,
+      w: TOY_SIZE.w,
+      h: TOY_SIZE.h,
+      collected: false
+    };
+    this.exitGate = {
+      x: this.currentLevel().exitGatePosition.x,
+      y: this.currentLevel().exitGatePosition.y,
+      w: EXIT_GATE_SIZE.w,
+      h: EXIT_GATE_SIZE.h
+    };
     this.hasGoldenToy = false;
     this.gateHintTimerSec = 0;
+    this.levelTitleTimerSec = 1.5;
   }
 
   isGameOver(): boolean {
@@ -332,6 +456,9 @@ export class Game {
 
     if (this.gateHintTimerSec > 0) {
       this.gateHintTimerSec = Math.max(0, this.gateHintTimerSec - delta);
+    }
+    if (this.levelTitleTimerSec > 0) {
+      this.levelTitleTimerSec = Math.max(0, this.levelTitleTimerSec - delta);
     }
 
     if (this.playerState === "normal" && this.input.consumeDigPressed()) {
@@ -404,7 +531,7 @@ export class Game {
 
     this.updateEnemySpawning(delta);
     for (const enemy of this.enemies) {
-      enemy.update(delta, LEVEL_PLATFORMS, GRAVITY, TERMINAL_VELOCITY, COLLISION_SKIN);
+      enemy.update(delta, this.currentLevel().platforms, GRAVITY, TERMINAL_VELOCITY, COLLISION_SKIN);
     }
     this.handlePlayerEnemyCollision(previousPlayerBottom);
     this.updateBonesAndParticles(delta);
@@ -418,7 +545,7 @@ export class Game {
   private moveHorizontal(delta: number, state: { left: boolean; right: boolean }): void {
     this.player.x += this.player.vx * delta;
 
-    for (const platform of LEVEL_PLATFORMS) {
+    for (const platform of this.currentLevel().platforms) {
       if (!intersectsWithSkin(this.player, platform, COLLISION_SKIN)) {
         continue;
       }
@@ -440,7 +567,7 @@ export class Game {
   private moveVertical(delta: number): void {
     this.player.y += this.player.vy * delta;
 
-    for (const platform of LEVEL_PLATFORMS) {
+    for (const platform of this.currentLevel().platforms) {
       if (!intersectsWithSkin(this.player, platform, COLLISION_SKIN)) {
         continue;
       }
@@ -468,7 +595,7 @@ export class Game {
       h: this.player.h
     };
 
-    const blockedAtSteppedHeight = LEVEL_PLATFORMS.some((platform) => intersectsWithSkin(steppedRect, platform, COLLISION_SKIN));
+    const blockedAtSteppedHeight = this.currentLevel().platforms.some((platform) => intersectsWithSkin(steppedRect, platform, COLLISION_SKIN));
     if (blockedAtSteppedHeight) {
       return false;
     }
@@ -568,7 +695,7 @@ export class Game {
     const enemySize = tempEnemy.getBody();
 
     const playerCenterX = this.player.x + this.player.w / 2;
-    const shuffled = [...ENEMY_SPAWN_POINTS].sort(() => Math.random() - 0.5);
+    const shuffled = [...this.currentLevel().enemySpawnPoints].sort(() => Math.random() - 0.5);
 
     for (const spawnPoint of shuffled) {
       const candidateX = spawnPoint.x;
@@ -589,12 +716,12 @@ export class Game {
         continue;
       }
 
-      const intersectsPlatform = LEVEL_PLATFORMS.some((platform) => intersectsWithSkin(candidate, platform, 0));
+      const intersectsPlatform = this.currentLevel().platforms.some((platform) => intersectsWithSkin(candidate, platform, 0));
       if (intersectsPlatform) {
         continue;
       }
 
-      const hasGroundBelow = LEVEL_PLATFORMS.some((platform) => {
+      const hasGroundBelow = this.currentLevel().platforms.some((platform) => {
         const footX = candidate.x + candidate.w / 2;
         const footY = candidate.y + candidate.h + 2;
         const withinX = footX >= platform.x && footX <= platform.x + platform.w;
@@ -663,7 +790,7 @@ export class Game {
       this.sound?.playGateUnlock();
     }
 
-    if (!intersectsWithSkin(this.player, EXIT_GATE, 0)) {
+    if (!intersectsWithSkin(this.player, this.exitGate, 0)) {
       return;
     }
 
@@ -677,7 +804,9 @@ export class Game {
     this.onLevelComplete?.({
       bonesCollected: this.bonesCollected,
       heartsRemaining: this.hearts,
-      timeSec: this.elapsedSec
+      timeSec: this.elapsedSec,
+      levelName: this.currentLevel().name,
+      hasNextLevel: this.hasNextLevel()
     });
   }
 
@@ -849,7 +978,7 @@ export class Game {
   }
 
   private generateDigSpots(levelSeed: string): DigSpot[] {
-    const ground = getMainGroundPlatform();
+    const ground = getMainGroundPlatform(this.currentLevel().platforms);
     const rng = createSeededRng(levelSeed);
 
     const count = DIG_SPOT_MIN_COUNT + Math.floor(rng() * (DIG_SPOT_MAX_COUNT - DIG_SPOT_MIN_COUNT + 1));
@@ -867,7 +996,7 @@ export class Game {
       const x = Math.floor(lerp(minX, maxX, rng()));
       const centerX = x + DIG_SPOT_WIDTH / 2;
 
-      const tooCloseToEnemySpawn = ENEMY_SPAWN_POINTS.some((spawn) => Math.abs(centerX - spawn.x) < DIG_MIN_DISTANCE_FROM_ENEMY);
+      const tooCloseToEnemySpawn = this.currentLevel().enemySpawnPoints.some((spawn) => Math.abs(centerX - spawn.x) < DIG_MIN_DISTANCE_FROM_ENEMY);
       if (tooCloseToEnemySpawn) {
         continue;
       }
@@ -890,7 +1019,7 @@ export class Game {
         dirtDecor: createSpotDirtDecor(`${levelSeed}:${x}:${spotY}`)
       };
 
-      if (!isValidDigSpot(candidate, LEVEL_PLATFORMS)) {
+      if (!isValidDigSpot(candidate, this.currentLevel().platforms)) {
         continue;
       }
 
@@ -904,11 +1033,11 @@ export class Game {
     this.ctx.imageSmoothingEnabled = false;
     this.ctx.clearRect(0, 0, INTERNAL_WIDTH, INTERNAL_HEIGHT);
 
-    this.ctx.fillStyle = "#8bd3ff";
+    this.ctx.fillStyle = this.currentLevel().backgroundColor;
     this.ctx.fillRect(0, 0, INTERNAL_WIDTH, INTERNAL_HEIGHT);
 
     this.ctx.fillStyle = "#669f5d";
-    for (const platform of LEVEL_PLATFORMS) {
+    for (const platform of this.currentLevel().platforms) {
       this.ctx.fillRect(platform.x, platform.y, platform.w, platform.h);
     }
 
@@ -925,6 +1054,9 @@ export class Game {
     if (this.gateHintTimerSec > 0) {
       this.drawGateHint();
     }
+    if (this.levelTitleTimerSec > 0) {
+      this.drawLevelTitle();
+    }
     if (this.debugEnabled) {
       this.drawDebug();
     }
@@ -935,17 +1067,17 @@ export class Game {
     const pulse = 0.75 + Math.sin(this.nowMs * 0.01) * 0.25;
 
     this.ctx.fillStyle = unlocked ? `rgba(76, 178, 89, ${pulse.toFixed(3)})` : "#6d5f67";
-    this.ctx.fillRect(EXIT_GATE.x, EXIT_GATE.y, EXIT_GATE.w, EXIT_GATE.h);
+    this.ctx.fillRect(this.exitGate.x, this.exitGate.y, this.exitGate.w, this.exitGate.h);
 
     this.ctx.fillStyle = unlocked ? "#c8f3ce" : "#a99ca4";
     const bars = 3;
     for (let i = 0; i < bars; i += 1) {
-      const x = EXIT_GATE.x + 3 + i * 4;
-      this.ctx.fillRect(x, EXIT_GATE.y + 3, 2, EXIT_GATE.h - 6);
+      const x = this.exitGate.x + 3 + i * 4;
+      this.ctx.fillRect(x, this.exitGate.y + 3, 2, this.exitGate.h - 6);
     }
 
     this.ctx.strokeStyle = "#283040";
-    this.ctx.strokeRect(EXIT_GATE.x, EXIT_GATE.y, EXIT_GATE.w, EXIT_GATE.h);
+    this.ctx.strokeRect(this.exitGate.x, this.exitGate.y, this.exitGate.w, this.exitGate.h);
   }
 
   private drawGoldenToy(): void {
@@ -1130,6 +1262,15 @@ export class Game {
     this.ctx.fillText("Find the Golden Toy", 105, 20);
   }
 
+  private drawLevelTitle(): void {
+    const alpha = clamp(this.levelTitleTimerSec / 1.5, 0, 1);
+    this.ctx.fillStyle = `rgba(10, 15, 25, ${(0.62 * alpha).toFixed(3)})`;
+    this.ctx.fillRect(88, 28, 144, 24);
+    this.ctx.fillStyle = `rgba(246, 240, 214, ${alpha.toFixed(3)})`;
+    this.ctx.font = "10px monospace";
+    this.ctx.fillText(this.currentLevel().name, 96, 43);
+  }
+
   private drawDebug(): void {
     const coyoteRemaining = Math.max(0, COYOTE_TIME_MS - (this.nowMs - this.lastGroundedTimeMs));
     const jumpBufferRemaining = Math.max(0, JUMP_BUFFER_MS - (this.nowMs - this.lastJumpPressedTimeMs));
@@ -1153,7 +1294,11 @@ export class Game {
       h: this.player.h
     };
 
-    return LEVEL_PLATFORMS.some((platform) => intersectsWithSkin(probe, platform, COLLISION_SKIN));
+    return this.currentLevel().platforms.some((platform) => intersectsWithSkin(probe, platform, COLLISION_SKIN));
+  }
+
+  private currentLevel(): LevelDefinition {
+    return LEVELS[this.levelIndex];
   }
 
   private resizeCanvas(): void {
@@ -1193,9 +1338,9 @@ function isValidDigSpot(spot: DigSpot, platforms: Rect[]): boolean {
   return platforms.some((platform) => platform.y >= 160 && intersectsWithSkin(groundProbe, platform, 0));
 }
 
-function getMainGroundPlatform(): Rect {
-  let best = LEVEL_PLATFORMS[0];
-  for (const platform of LEVEL_PLATFORMS) {
+function getMainGroundPlatform(platforms: Rect[]): Rect {
+  let best = platforms[0];
+  for (const platform of platforms) {
     if (platform.y > best.y) {
       best = platform;
     }

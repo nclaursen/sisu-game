@@ -18,7 +18,7 @@ app.innerHTML = `
     <div id="startOverlay" class="start-overlay">
       <div class="start-card">
         <h2>Sisu: Guardian of the Garden</h2>
-        <p>Phase 2D Prototype</p>
+        <p>Phase 5 Prototype</p>
         <button id="startButton" type="button">Start</button>
       </div>
     </div>
@@ -34,7 +34,14 @@ app.innerHTML = `
         <h2>Level Complete!</h2>
         <p id="levelStats">Bones: 0 | Hearts: 0 | Time: 0.0s</p>
         <button id="playAgainButton" type="button">Play Again</button>
-        <button id="nextLevelButton" type="button" disabled>Next Level (Soon)</button>
+        <button id="nextLevelButton" type="button">Next Level</button>
+      </div>
+    </div>
+    <div id="demoCompleteOverlay" class="start-overlay hidden">
+      <div class="start-card">
+        <h2>You Finished the Demo!</h2>
+        <p id="demoStats">Thanks for playing Sisu.</p>
+        <button id="demoPlayAgainButton" type="button">Play Again</button>
       </div>
     </div>
   </main>
@@ -54,6 +61,10 @@ const restartButton = document.querySelector<HTMLButtonElement>("#restartButton"
 const levelCompleteOverlay = document.querySelector<HTMLDivElement>("#levelCompleteOverlay");
 const levelStats = document.querySelector<HTMLParagraphElement>("#levelStats");
 const playAgainButton = document.querySelector<HTMLButtonElement>("#playAgainButton");
+const nextLevelButton = document.querySelector<HTMLButtonElement>("#nextLevelButton");
+const demoCompleteOverlay = document.querySelector<HTMLDivElement>("#demoCompleteOverlay");
+const demoStats = document.querySelector<HTMLParagraphElement>("#demoStats");
+const demoPlayAgainButton = document.querySelector<HTMLButtonElement>("#demoPlayAgainButton");
 const soundToggle = document.querySelector<HTMLButtonElement>("#soundToggle");
 const controlButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-control]"));
 
@@ -66,6 +77,10 @@ if (
   !levelCompleteOverlay ||
   !levelStats ||
   !playAgainButton ||
+  !nextLevelButton ||
+  !demoCompleteOverlay ||
+  !demoStats ||
+  !demoPlayAgainButton ||
   !soundToggle
 ) {
   throw new Error("Missing required game UI elements");
@@ -82,18 +97,33 @@ const game = new Game(canvas, input, {
     sound.stopMusic();
     gameOverOverlay.classList.remove("hidden");
   },
-  onLevelComplete: ({ bonesCollected, heartsRemaining, timeSec }) => {
+  onLevelComplete: ({ bonesCollected, heartsRemaining, timeSec, levelName, hasNextLevel }) => {
     sound.stopMusic();
-    levelStats.textContent = `Bones: ${bonesCollected} | Hearts: ${heartsRemaining} | Time: ${timeSec.toFixed(1)}s`;
+    levelStats.textContent = `${levelName} | Bones: ${bonesCollected} | Hearts: ${heartsRemaining} | Time: ${timeSec.toFixed(1)}s`;
+    nextLevelButton.textContent = hasNextLevel ? "Next Level" : "Finish Demo";
     levelCompleteOverlay.classList.remove("hidden");
+  },
+  onDemoComplete: ({ bonesCollected, heartsRemaining, timeSec }) => {
+    sound.stopMusic();
+    demoStats.textContent = `Total Bones: ${bonesCollected} | Hearts: ${heartsRemaining} | Time: ${timeSec.toFixed(1)}s`;
+    demoCompleteOverlay.classList.remove("hidden");
   }
 });
 
-const restartGame = (): void => {
+const restartCurrentLevel = (): void => {
   game.restart();
   sound.startMusic();
   gameOverOverlay.classList.add("hidden");
   levelCompleteOverlay.classList.add("hidden");
+  demoCompleteOverlay.classList.add("hidden");
+};
+
+const restartFromFirstLevel = (): void => {
+  game.restartFromFirstLevel();
+  sound.startMusic();
+  gameOverOverlay.classList.add("hidden");
+  levelCompleteOverlay.classList.add("hidden");
+  demoCompleteOverlay.classList.add("hidden");
 };
 
 let soundOn = true;
@@ -112,11 +142,19 @@ startButton.addEventListener("click", () => {
   sound.startMusic();
 });
 
-restartButton.addEventListener("click", restartGame);
-playAgainButton.addEventListener("click", restartGame);
+restartButton.addEventListener("click", restartCurrentLevel);
+playAgainButton.addEventListener("click", restartCurrentLevel);
+nextLevelButton.addEventListener("click", () => {
+  levelCompleteOverlay.classList.add("hidden");
+  const moved = game.nextLevel();
+  if (moved) {
+    sound.startMusic();
+  }
+});
+demoPlayAgainButton.addEventListener("click", restartFromFirstLevel);
 
 window.addEventListener("keydown", (event) => {
-  if (event.code === "KeyR" && (game.isGameOver() || game.isLevelComplete())) {
-    restartGame();
+  if (event.code === "KeyR" && (game.isGameOver() || game.isLevelComplete() || game.isDemoComplete())) {
+    restartCurrentLevel();
   }
 });

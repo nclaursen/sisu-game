@@ -73,6 +73,8 @@ interface SpawnPoint {
 interface LevelDefinition {
   id: string;
   name: string;
+  width: number;
+  height: number;
   backgroundColor: string;
   platforms: Rect[];
   enemySpawnPoints: SpawnPoint[];
@@ -100,6 +102,7 @@ interface GameCallbacks {
 
 const INTERNAL_WIDTH = 320;
 const INTERNAL_HEIGHT = 180;
+const CAMERA_PLAYER_SCREEN_X = INTERNAL_WIDTH * 0.4;
 const GRAVITY = 1200;
 const ACCEL = 900;
 const AIR_ACCEL = 650;
@@ -153,64 +156,105 @@ const PLAYER_START_Y = 40;
 const LEVEL_WILD_GARDEN: LevelDefinition = {
   id: "wild-garden",
   name: "Wild Garden",
+  width: 2200,
+  height: INTERNAL_HEIGHT,
   backgroundColor: "#8bd3ff",
   platforms: [
-    { x: 0, y: 164, w: 320, h: 16 },
-    { x: 52, y: 128, w: 72, h: 10 },
-    { x: 160, y: 102, w: 62, h: 10 },
-    { x: 250, y: 138, w: 56, h: 10 }
+    { x: 0, y: 164, w: 2200, h: 16 },
+    { x: 70, y: 132, w: 86, h: 10 },
+    { x: 220, y: 110, w: 72, h: 10 },
+    { x: 390, y: 136, w: 92, h: 10 },
+    { x: 540, y: 102, w: 74, h: 10 },
+    { x: 700, y: 126, w: 84, h: 10 },
+    { x: 890, y: 98, w: 80, h: 10 },
+    { x: 1080, y: 136, w: 96, h: 10 },
+    { x: 1260, y: 108, w: 78, h: 10 },
+    { x: 1450, y: 124, w: 90, h: 10 },
+    { x: 1640, y: 96, w: 82, h: 10 },
+    { x: 1830, y: 130, w: 94, h: 10 },
+    { x: 2010, y: 112, w: 72, h: 10 }
   ],
   enemySpawnPoints: [
-    { x: 78, groundY: 128 },
-    { x: 176, groundY: 102 },
-    { x: 270, groundY: 138 },
-    { x: 236, groundY: 138 }
+    { x: 120, groundY: 132 },
+    { x: 430, groundY: 136 },
+    { x: 740, groundY: 126 },
+    { x: 1120, groundY: 136 },
+    { x: 1500, groundY: 124 },
+    { x: 1860, groundY: 130 }
   ],
-  goldenToyPosition: { x: 186, y: 88 },
-  exitGatePosition: { x: 292, y: 132 },
+  goldenToyPosition: { x: 1560, y: 82 },
+  exitGatePosition: { x: 2080, y: 132 },
   digSeed: "wild-garden-seed"
 };
 
 const LEVEL_COURTYARD: LevelDefinition = {
   id: "courtyard",
   name: "Courtyard",
+  width: 2200,
+  height: INTERNAL_HEIGHT,
   backgroundColor: "#d9dde2",
   platforms: [
-    { x: 0, y: 164, w: 320, h: 16 },
-    { x: 26, y: 138, w: 70, h: 10 },
-    { x: 116, y: 118, w: 58, h: 10 },
-    { x: 190, y: 98, w: 52, h: 10 },
-    { x: 246, y: 128, w: 54, h: 10 }
+    { x: 0, y: 164, w: 2200, h: 16 },
+    { x: 40, y: 144, w: 70, h: 10 },
+    { x: 150, y: 122, w: 62, h: 10 },
+    { x: 250, y: 100, w: 54, h: 10 },
+    { x: 350, y: 132, w: 72, h: 10 },
+    { x: 500, y: 112, w: 58, h: 10 },
+    { x: 620, y: 90, w: 54, h: 10 },
+    { x: 760, y: 124, w: 70, h: 10 },
+    { x: 920, y: 102, w: 56, h: 10 },
+    { x: 1040, y: 82, w: 54, h: 10 },
+    { x: 1180, y: 126, w: 72, h: 10 },
+    { x: 1360, y: 106, w: 60, h: 10 },
+    { x: 1500, y: 86, w: 54, h: 10 },
+    { x: 1650, y: 122, w: 74, h: 10 },
+    { x: 1830, y: 100, w: 60, h: 10 },
+    { x: 1980, y: 124, w: 76, h: 10 }
   ],
   enemySpawnPoints: [
-    { x: 34, groundY: 138 },
-    { x: 124, groundY: 118 },
-    { x: 198, groundY: 98 },
-    { x: 258, groundY: 128 }
+    { x: 70, groundY: 144 },
+    { x: 390, groundY: 132 },
+    { x: 800, groundY: 124 },
+    { x: 1210, groundY: 126 },
+    { x: 1690, groundY: 122 },
+    { x: 2020, groundY: 124 }
   ],
-  goldenToyPosition: { x: 204, y: 84 },
-  exitGatePosition: { x: 292, y: 132 },
+  goldenToyPosition: { x: 1700, y: 74 },
+  exitGatePosition: { x: 2080, y: 132 },
   digSeed: "courtyard-seed"
 };
 
 const LEVEL_SNOW_GARDEN: LevelDefinition = {
   id: "snow-garden",
   name: "Snow Garden",
+  width: 2200,
+  height: INTERNAL_HEIGHT,
   backgroundColor: "#b7d4ef",
   platforms: [
-    { x: 0, y: 164, w: 320, h: 16 },
-    { x: 52, y: 128, w: 72, h: 10 },
-    { x: 160, y: 102, w: 62, h: 10 },
-    { x: 250, y: 138, w: 56, h: 10 }
+    { x: 0, y: 164, w: 2200, h: 16 },
+    { x: 70, y: 132, w: 86, h: 10 },
+    { x: 220, y: 110, w: 72, h: 10 },
+    { x: 390, y: 136, w: 92, h: 10 },
+    { x: 540, y: 102, w: 74, h: 10 },
+    { x: 700, y: 126, w: 84, h: 10 },
+    { x: 890, y: 98, w: 80, h: 10 },
+    { x: 1080, y: 136, w: 96, h: 10 },
+    { x: 1260, y: 108, w: 78, h: 10 },
+    { x: 1450, y: 124, w: 90, h: 10 },
+    { x: 1640, y: 96, w: 82, h: 10 },
+    { x: 1830, y: 130, w: 94, h: 10 },
+    { x: 2010, y: 112, w: 72, h: 10 }
   ],
   enemySpawnPoints: [
-    { x: 78, groundY: 128 },
-    { x: 176, groundY: 102 },
-    { x: 270, groundY: 138 },
-    { x: 236, groundY: 138 }
+    { x: 120, groundY: 132 },
+    { x: 430, groundY: 136 },
+    { x: 740, groundY: 126 },
+    { x: 1120, groundY: 136 },
+    { x: 1500, groundY: 124 },
+    { x: 1860, groundY: 130 }
   ],
-  goldenToyPosition: { x: 186, y: 88 },
-  exitGatePosition: { x: 292, y: 132 },
+  goldenToyPosition: { x: 1640, y: 84 },
+  exitGatePosition: { x: 2080, y: 132 },
   digSeed: "snow-garden-seed"
 };
 
@@ -260,6 +304,7 @@ export class Game {
   private elapsedSec = 0;
   private levelIndex = 0;
   private levelTitleTimerSec = 0;
+  private camera = { x: 0, y: 0 };
 
   private playerState: PlayerActionState = "normal";
   private digTimerSec = 0;
@@ -414,6 +459,8 @@ export class Game {
     this.hasGoldenToy = false;
     this.gateHintTimerSec = 0;
     this.levelTitleTimerSec = 1.5;
+    this.camera.x = 0;
+    this.camera.y = 0;
   }
 
   isGameOver(): boolean {
@@ -523,6 +570,7 @@ export class Game {
     this.player.vy = Math.min(this.player.vy, TERMINAL_VELOCITY);
 
     this.moveHorizontal(delta, state);
+    this.clampPlayerToWorldBounds();
     this.moveVertical(delta);
     this.player.grounded = this.checkGrounded();
     if (this.player.grounded) {
@@ -536,6 +584,7 @@ export class Game {
     this.handlePlayerEnemyCollision(previousPlayerBottom);
     this.updateBonesAndParticles(delta);
     this.handleGoldenToyAndGate();
+    this.updateCamera();
     this.updatePlayerAnimation(delta);
 
     this.player.animationTime += delta;
@@ -579,6 +628,17 @@ export class Game {
       }
 
       this.player.vy = 0;
+    }
+  }
+
+  private clampPlayerToWorldBounds(): void {
+    const maxX = this.currentLevel().width - this.player.w;
+    if (this.player.x < 0) {
+      this.player.x = 0;
+      this.player.vx = Math.max(0, this.player.vx);
+    } else if (this.player.x > maxX) {
+      this.player.x = maxX;
+      this.player.vx = Math.min(0, this.player.vx);
     }
   }
 
@@ -983,7 +1043,7 @@ export class Game {
 
     const count = DIG_SPOT_MIN_COUNT + Math.floor(rng() * (DIG_SPOT_MAX_COUNT - DIG_SPOT_MIN_COUNT + 1));
     const minX = Math.max(
-      ground.x + Math.floor(INTERNAL_WIDTH * DIG_START_MIN_X_FACTOR),
+      ground.x + Math.floor(this.currentLevel().width * DIG_START_MIN_X_FACTOR),
       ground.x + DIG_MIN_DISTANCE_FROM_START
     );
     const maxX = ground.x + ground.w - DIG_SPOT_WIDTH - 2;
@@ -1036,6 +1096,9 @@ export class Game {
     this.ctx.fillStyle = this.currentLevel().backgroundColor;
     this.ctx.fillRect(0, 0, INTERNAL_WIDTH, INTERNAL_HEIGHT);
 
+    this.ctx.save();
+    this.ctx.translate(-this.camera.x, -this.camera.y);
+
     this.ctx.fillStyle = "#669f5d";
     for (const platform of this.currentLevel().platforms) {
       this.ctx.fillRect(platform.x, platform.y, platform.w, platform.h);
@@ -1050,6 +1113,8 @@ export class Game {
       enemy.draw(this.ctx);
     }
     this.drawPlayer();
+    this.ctx.restore();
+
     this.drawHud();
     if (this.gateHintTimerSec > 0) {
       this.drawGateHint();
@@ -1279,7 +1344,7 @@ export class Game {
     this.ctx.fillStyle = "#d7f3ff";
     this.ctx.font = "9px monospace";
     this.ctx.fillText(`GS:${this.gameState} G:${this.player.grounded ? 1 : 0} H:${this.hearts} B:${this.bonesCollected}`, 10, 68);
-    this.ctx.fillText(`Toy:${this.hasGoldenToy ? 1 : 0} GateHint:${this.gateHintTimerSec.toFixed(2)}`, 10, 80);
+    this.ctx.fillText(`Toy:${this.hasGoldenToy ? 1 : 0} CamX:${this.camera.x.toFixed(1)}`, 10, 80);
     this.ctx.fillText(`State:${this.playerState} DigT:${Math.max(0, this.digTimerSec).toFixed(2)}`, 10, 92);
     this.ctx.fillText(`VX:${this.player.vx.toFixed(1)} VY:${this.player.vy.toFixed(1)}`, 10, 104);
     this.ctx.fillText(`Coyote:${coyoteRemaining.toFixed(0)}ms`, 10, 116);
@@ -1295,6 +1360,13 @@ export class Game {
     };
 
     return this.currentLevel().platforms.some((platform) => intersectsWithSkin(probe, platform, COLLISION_SKIN));
+  }
+
+  private updateCamera(): void {
+    const maxCameraX = Math.max(0, this.currentLevel().width - INTERNAL_WIDTH);
+    const desiredX = this.player.x - CAMERA_PLAYER_SCREEN_X;
+    this.camera.x = clamp(desiredX, 0, maxCameraX);
+    this.camera.y = 0;
   }
 
   private currentLevel(): LevelDefinition {

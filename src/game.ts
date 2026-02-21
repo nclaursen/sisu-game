@@ -17,6 +17,16 @@ interface Player extends Rect {
   animationTime: number;
 }
 
+interface Frame {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  duration: number;
+}
+
+type PlayerAnimationName = "idle" | "run" | "jump" | "digging";
+
 interface DigSpot extends Rect {
   dug: boolean;
   hasBone: boolean;
@@ -137,6 +147,12 @@ export class Game {
   private readonly onLevelComplete?: (stats: LevelCompleteStats) => void;
   private readonly sound?: SoundManager;
   private readonly enemy: Enemy;
+  private readonly playerSpriteImage: HTMLImageElement;
+  private readonly playerAnimations: Record<PlayerAnimationName, Frame[]>;
+  private playerSpriteReady = false;
+  private currentPlayerAnimation: PlayerAnimationName = "idle";
+  private playerAnimationFrameIndex = 0;
+  private playerAnimationFrameElapsed = 0;
 
   private lastTick = 0;
   private nowMs = 0;
@@ -189,6 +205,12 @@ export class Game {
     this.sound = callbacks.sound;
     this.enemy = new Enemy(ENEMY_SPAWN);
     this.digSpots = this.generateDigSpots("level1");
+    const playerSprite = createPlaceholderPlayerSpriteSheet();
+    this.playerSpriteImage = playerSprite.image;
+    this.playerAnimations = playerSprite.animations;
+    this.playerSpriteImage.onload = () => {
+      this.playerSpriteReady = true;
+    };
 
     this.ctx.imageSmoothingEnabled = false;
     window.addEventListener("keydown", (event) => {
@@ -233,6 +255,9 @@ export class Game {
     this.player.facing = 1;
     this.player.grounded = false;
     this.player.animationTime = 0;
+    this.currentPlayerAnimation = "idle";
+    this.playerAnimationFrameIndex = 0;
+    this.playerAnimationFrameElapsed = 0;
 
     this.enemy.reset();
     this.digSpots = this.generateDigSpots("level1");
@@ -358,6 +383,7 @@ export class Game {
     this.handlePlayerEnemyCollision(previousPlayerBottom);
     this.updateBonesAndParticles(delta);
     this.handleGoldenToyAndGate();
+    this.updatePlayerAnimation(delta);
 
     this.player.animationTime += delta;
     this.previousJumpHeld = state.jumpHeld;
@@ -848,19 +874,66 @@ export class Game {
       this.ctx.globalAlpha = 0.35;
     }
 
+    const drawX = this.player.x - 4;
+    const drawY = this.player.y - 8;
+    const drawW = 24;
+    const drawH = 24;
+
     if (this.player.facing === -1) {
-      this.ctx.translate(this.player.x + this.player.w, this.player.y);
+      this.ctx.translate(drawX + drawW, drawY);
       this.ctx.scale(-1, 1);
     } else {
-      this.ctx.translate(this.player.x, this.player.y);
+      this.ctx.translate(drawX, drawY);
     }
 
-    this.ctx.fillStyle = this.playerState === "digging" ? "#3b4659" : "#2f4f6f";
-    this.ctx.fillRect(0, 0, this.player.w, this.player.h);
-    this.ctx.fillStyle = "#ffffff";
-    this.ctx.fillRect(11, 4, 2, 2);
+    if (this.playerSpriteReady) {
+      const frame = this.getCurrentPlayerFrame();
+      this.ctx.drawImage(this.playerSpriteImage, frame.x, frame.y, frame.w, frame.h, 0, 0, drawW, drawH);
+    } else {
+      this.ctx.fillStyle = this.playerState === "digging" ? "#3b4659" : "#2f4f6f";
+      this.ctx.fillRect(4, 8, this.player.w, this.player.h);
+      this.ctx.fillStyle = "#ffffff";
+      this.ctx.fillRect(15, 12, 2, 2);
+    }
 
     this.ctx.restore();
+  }
+
+  private updatePlayerAnimation(delta: number): void {
+    const nextAnimation: PlayerAnimationName =
+      this.playerState === "digging"
+        ? "digging"
+        : !this.player.grounded
+          ? "jump"
+          : Math.abs(this.player.vx) > 18
+            ? "run"
+            : "idle";
+
+    if (nextAnimation !== this.currentPlayerAnimation) {
+      this.currentPlayerAnimation = nextAnimation;
+      this.playerAnimationFrameIndex = 0;
+      this.playerAnimationFrameElapsed = 0;
+    }
+
+    const frames = this.playerAnimations[this.currentPlayerAnimation];
+    if (frames.length <= 1) {
+      return;
+    }
+
+    this.playerAnimationFrameElapsed += delta;
+    while (this.playerAnimationFrameElapsed >= frames[this.playerAnimationFrameIndex].duration) {
+      this.playerAnimationFrameElapsed -= frames[this.playerAnimationFrameIndex].duration;
+      if (this.playerAnimationFrameIndex < frames.length - 1) {
+        this.playerAnimationFrameIndex += 1;
+      } else {
+        this.playerAnimationFrameIndex = 0;
+      }
+    }
+  }
+
+  private getCurrentPlayerFrame(): Frame {
+    const frames = this.playerAnimations[this.currentPlayerAnimation];
+    return frames[this.playerAnimationFrameIndex] ?? frames[0];
   }
 
   private drawHud(): void {
@@ -1017,4 +1090,117 @@ function moveTowards(current: number, target: number, maxDelta: number): number 
     return target;
   }
   return current + Math.sign(target - current) * maxDelta;
+}
+
+function createPlaceholderPlayerSpriteSheet(): {
+  image: HTMLImageElement;
+  animations: Record<PlayerAnimationName, Frame[]>;
+} {
+  const frameSize = 24;
+  const cols = 4;
+  const rows = 3;
+  const sheet = document.createElement("canvas");
+  sheet.width = cols * frameSize;
+  sheet.height = rows * frameSize;
+  const ctx = sheet.getContext("2d");
+  if (!ctx) {
+    throw new Error("Unable to create placeholder sprite sheet");
+  }
+
+  const drawDog = (col: number, row: number, variant: "idleA" | "idleB" | "runA" | "runB" | "runC" | "runD" | "jump" | "digA" | "digB"): void => {
+    const x = col * frameSize;
+    const y = row * frameSize;
+    ctx.clearRect(x, y, frameSize, frameSize);
+
+    const bodyColor = "#2f4f6f";
+    const accent = "#6e98bf";
+    const light = "#e4f1ff";
+    const dirt = "#7f5b38";
+
+    // Body block.
+    ctx.fillStyle = bodyColor;
+    ctx.fillRect(x + 6, y + 10, 12, 10);
+    // Head.
+    ctx.fillRect(x + 11, y + 7, 8, 7);
+    // Ear.
+    ctx.fillRect(x + 14, y + 5, 2, 2);
+    // Tail.
+    const tailY = variant === "runA" || variant === "runC" ? 12 : 11;
+    ctx.fillRect(x + 4, y + tailY, 2, 4);
+    // Eye.
+    ctx.fillStyle = light;
+    ctx.fillRect(x + 16, y + 9, 1, 1);
+    // Belly accent.
+    ctx.fillStyle = accent;
+    ctx.fillRect(x + 8, y + 14, 8, 3);
+
+    // Legs vary by animation frame.
+    ctx.fillStyle = bodyColor;
+    if (variant === "runA") {
+      ctx.fillRect(x + 7, y + 19, 2, 2);
+      ctx.fillRect(x + 14, y + 18, 2, 3);
+    } else if (variant === "runB") {
+      ctx.fillRect(x + 8, y + 18, 2, 3);
+      ctx.fillRect(x + 13, y + 19, 2, 2);
+    } else if (variant === "runC") {
+      ctx.fillRect(x + 7, y + 18, 2, 3);
+      ctx.fillRect(x + 14, y + 19, 2, 2);
+    } else if (variant === "runD") {
+      ctx.fillRect(x + 8, y + 19, 2, 2);
+      ctx.fillRect(x + 13, y + 18, 2, 3);
+    } else if (variant === "jump") {
+      ctx.fillRect(x + 8, y + 17, 2, 2);
+      ctx.fillRect(x + 13, y + 17, 2, 2);
+      ctx.fillStyle = accent;
+      ctx.fillRect(x + 6, y + 21, 12, 1);
+    } else if (variant === "digA" || variant === "digB") {
+      ctx.fillRect(x + 7, y + 19, 2, 2);
+      ctx.fillRect(x + 13, y + 19, 2, 2);
+      ctx.fillStyle = dirt;
+      ctx.fillRect(x + 5, y + 20, 14, 3);
+      if (variant === "digB") {
+        ctx.fillRect(x + 4, y + 19, 2, 2);
+        ctx.fillRect(x + 18, y + 19, 2, 2);
+      }
+    } else {
+      // idle
+      const legOffset = variant === "idleB" ? 1 : 0;
+      ctx.fillRect(x + 8, y + 19 - legOffset, 2, 2 + legOffset);
+      ctx.fillRect(x + 13, y + 19, 2, 2);
+    }
+  };
+
+  drawDog(0, 0, "idleA");
+  drawDog(1, 0, "idleB");
+  drawDog(2, 0, "idleA");
+  drawDog(3, 0, "idleB");
+
+  drawDog(0, 1, "runA");
+  drawDog(1, 1, "runB");
+  drawDog(2, 1, "runC");
+  drawDog(3, 1, "runD");
+
+  drawDog(0, 2, "jump");
+  drawDog(1, 2, "digA");
+  drawDog(2, 2, "digB");
+  drawDog(3, 2, "idleA");
+
+  const frame = (col: number, row: number, duration: number): Frame => ({
+    x: col * frameSize,
+    y: row * frameSize,
+    w: frameSize,
+    h: frameSize,
+    duration
+  });
+
+  const animations: Record<PlayerAnimationName, Frame[]> = {
+    idle: [frame(0, 0, 0.16), frame(1, 0, 0.16), frame(2, 0, 0.16), frame(3, 0, 0.16)],
+    run: [frame(0, 1, 0.1), frame(1, 1, 0.1), frame(2, 1, 0.1), frame(3, 1, 0.1)],
+    jump: [frame(0, 2, 0.2)],
+    digging: [frame(1, 2, 0.12), frame(2, 2, 0.12)]
+  };
+
+  const image = new Image();
+  image.src = sheet.toDataURL("image/png");
+  return { image, animations };
 }

@@ -4,6 +4,7 @@ export interface InputState {
   jumpHeld: boolean;
   jumpPressed: boolean;
   dig: boolean;
+  digPressed: boolean;
 }
 
 const CONTROL_KEYS: Record<string, keyof InputState | null> = {
@@ -22,10 +23,12 @@ export class Input {
     right: false,
     jumpHeld: false,
     jumpPressed: false,
-    dig: false
+    dig: false,
+    digPressed: false
   };
 
   private hasConsumedJump = false;
+  private hasConsumedDig = false;
 
   attachKeyboard(target: Window): void {
     target.addEventListener("keydown", (event) => {
@@ -43,6 +46,14 @@ export class Input {
         return;
       }
 
+      if (control === "dig") {
+        if (!this.state.dig) {
+          this.state.digPressed = true;
+        }
+        this.state.dig = true;
+        return;
+      }
+
       this.state[control] = true;
     });
 
@@ -55,6 +66,11 @@ export class Input {
       event.preventDefault();
       if (control === "jumpHeld") {
         this.state.jumpHeld = false;
+        return;
+      }
+
+      if (control === "dig") {
+        this.state.dig = false;
         return;
       }
 
@@ -89,6 +105,9 @@ export class Input {
         }
 
         if (control === "dig") {
+          if (!this.state.dig) {
+            this.state.digPressed = true;
+          }
           this.state.dig = true;
         }
       };
@@ -130,8 +149,19 @@ export class Input {
     return true;
   }
 
+  consumeDigPressed(): boolean {
+    if (this.hasConsumedDig || !this.state.digPressed) {
+      return false;
+    }
+
+    this.hasConsumedDig = true;
+    return true;
+  }
+
   endFrame(): void {
     this.state.jumpPressed = false;
+    this.state.digPressed = false;
     this.hasConsumedJump = false;
+    this.hasConsumedDig = false;
   }
 }

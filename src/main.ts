@@ -17,8 +17,15 @@ app.innerHTML = `
     <div id="startOverlay" class="start-overlay">
       <div class="start-card">
         <h2>Sisu: Guardian of the Garden</h2>
-        <p>Phase 1 Prototype</p>
+        <p>Phase 2A Prototype</p>
         <button id="startButton" type="button">Start</button>
+      </div>
+    </div>
+    <div id="gameOverOverlay" class="start-overlay hidden">
+      <div class="start-card">
+        <h2>Game Over</h2>
+        <p>Press R or tap restart.</p>
+        <button id="restartButton" type="button">Restart</button>
       </div>
     </div>
   </main>
@@ -33,10 +40,12 @@ app.innerHTML = `
 const canvas = document.querySelector<HTMLCanvasElement>("#gameCanvas");
 const startOverlay = document.querySelector<HTMLDivElement>("#startOverlay");
 const startButton = document.querySelector<HTMLButtonElement>("#startButton");
+const gameOverOverlay = document.querySelector<HTMLDivElement>("#gameOverOverlay");
+const restartButton = document.querySelector<HTMLButtonElement>("#restartButton");
 const soundToggle = document.querySelector<HTMLButtonElement>("#soundToggle");
 const controlButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-control]"));
 
-if (!canvas || !startOverlay || !startButton || !soundToggle) {
+if (!canvas || !startOverlay || !startButton || !gameOverOverlay || !restartButton || !soundToggle) {
   throw new Error("Missing required game UI elements");
 }
 
@@ -44,7 +53,16 @@ const input = new Input();
 input.attachKeyboard(window);
 input.attachTouchButtons(controlButtons);
 
-const game = new Game(canvas, input);
+const game = new Game(canvas, input, {
+  onGameOver: () => {
+    gameOverOverlay.classList.remove("hidden");
+  }
+});
+
+const restartGame = (): void => {
+  game.restart();
+  gameOverOverlay.classList.add("hidden");
+};
 
 let soundOn = false;
 soundToggle.addEventListener("click", () => {
@@ -56,4 +74,12 @@ soundToggle.addEventListener("click", () => {
 startButton.addEventListener("click", () => {
   startOverlay.classList.add("hidden");
   game.start();
+});
+
+restartButton.addEventListener("click", restartGame);
+
+window.addEventListener("keydown", (event) => {
+  if (event.code === "KeyR" && game.isGameOver()) {
+    restartGame();
+  }
 });
